@@ -1,26 +1,29 @@
 """
 database/models.py
 
-Python dataclass reprezentace datových kontraktů domluvených mezi Context,
-Coach, Keyholder a Decision enginem. Tyto třídy jsou "runtime" tvar dat;
-(de)serializace do SQLite (viz database.py) převádí vnořené struktury na
-JSON stringy pro *_json sloupce podle schématu v migrations/001_initial_schema.sql.
+Python dataclass representations of the data contracts agreed between
+the Context, Coach, Keyholder, and Decision engines. These classes are
+the "runtime" shape of the data; (de)serialization to SQLite (see
+database.py) converts nested structures into JSON strings for the
+*_json columns, per the schema in migrations/001_initial_schema.sql.
 
-Cíleno na Python 3.13 — používá `from __future__ import annotations`,
-`dataclasses`, `enum.StrEnum` a moderní typing (`list[X]`, `X | None`).
+Targets Python 3.13 -- uses `from __future__ import annotations`,
+`dataclasses`, `enum.StrEnum`, and modern typing (`list[X]`, `X | None`).
 
-Princip: tyto třídy neobsahují žádnou byznys logiku ani validaci nad rámec
-tvaru dat. Byznys logika patří do core/*_engine.py.
+Principle: these classes contain no business logic or validation
+beyond the shape of the data. Business logic belongs in
+core/*_engine.py.
 
-Fáze 1.2: `created_at` je nyní povinný konstruktorový parametr (žádný
-`default_factory=utc_now`, `utc_now()` odstraněno) — model sám nikdy
-negeneruje svůj vlastní timestamp; aplikační vrstva ho dodává explicitně
-z injektovaného `infrastructure.clock.Clock`. Všechny dataclassy s
-`created_at` jsou proto `@dataclass(kw_only=True)`, protože Python
-vyžaduje, aby povinná pole nenásledovala po polích s defaultem (`id` má
-`default_factory=new_id`) — `kw_only=True` to obchází tak, že se
-konstruuje výhradně přes klíčová slova, což ostatně odpovídá tomu, jak
-se tyto třídy v kódu už dnes volají.
+Phase 1.2: `created_at` is now a required constructor parameter (no
+`default_factory=utc_now`; `utc_now()` removed) -- the model itself
+never generates its own timestamp; the application layer supplies it
+explicitly from an injected `infrastructure.clock.Clock`. Every
+dataclass with `created_at` is therefore `@dataclass(kw_only=True)`,
+since Python requires that required fields not follow fields with a
+default (`id` has `default_factory=new_id`) -- `kw_only=True` works
+around this by constructing exclusively via keyword arguments, which
+matches how these classes are already called elsewhere in the code
+today.
 """
 
 from __future__ import annotations
@@ -33,21 +36,21 @@ from enum import StrEnum
 
 
 # =============================================================================
-# Pomocné funkce
+# Helper functions
 # =============================================================================
 
 def new_id() -> str:
-    """Generuje nové UUID4 jako string — jednotný formát ID napříč celým systémem."""
+    """Generates a new UUID4 as a string -- the uniform ID format across the whole system."""
     return str(uuid.uuid4())
 
 
 def iso(dt: datetime) -> str:
-    """Formátuje datetime do ISO 8601 stringu tak, jak je ukládán v DB (TEXT sloupce)."""
+    """Formats a datetime into the ISO 8601 string as stored in the DB (TEXT columns)."""
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def parse_iso(value: str) -> datetime:
-    """Parsuje ISO 8601 string zpět na timezone-aware datetime (UTC)."""
+    """Parses an ISO 8601 string back into a timezone-aware datetime (UTC)."""
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
@@ -198,7 +201,7 @@ class CoachAssessment:
 
 
 # =============================================================================
-# Keyholder Engine (+ interní TrustManager / RewardManager stav)
+# Keyholder Engine (+ internal TrustManager / RewardManager state)
 # =============================================================================
 
 @dataclass
@@ -213,8 +216,8 @@ class TrustState:
 class RewardState:
     eligible_rewards: list[str] = field(default_factory=list)
     pending_consequence: str | None = None
-    # Reward jako pozitivní zpětná vazba (philosophy.md 2.7): tento seznam
-    # se vyhodnocuje nezávisle na "failure streak" logice, ne jako jeho zrcadlo.
+    # Reward as positive feedback (philosophy.md 2.7): this list is
+    # evaluated independently of the "failure streak" logic, not as its mirror.
     positive_streak_note: str | None = None
 
 
@@ -232,7 +235,7 @@ class KeyholderAssessment:
     consistency_score: float = 0.0
     trust_state: TrustState = field(default_factory=TrustState)
     reward_state: RewardState = field(default_factory=RewardState)
-    rule_relevance: list[str] = field(default_factory=list)   # rule_group_id hodnoty
+    rule_relevance: list[str] = field(default_factory=list)   # rule_group_id values
 
 
 # =============================================================================
@@ -260,9 +263,9 @@ class DecisionResult:
     resolution_method: ResolutionMethod = ResolutionMethod.RULE_BASED
     impact_score: ImpactScore = field(default_factory=ImpactScore)
 
-    # Dvouvrstvé requires_user_approval — viz philosophy.md 2.5 a database
-    # schema komentář: is_critical_change (pevná pravidla) OR impact.is_significant,
-    # a bezpečnostní override (philosophy.md 2.3) běží mimo tuto úvahu úplně.
+    # Two-layer requires_user_approval -- see philosophy.md 2.5 and the
+    # database schema comment: is_critical_change (hard rules) OR impact.is_significant,
+    # and the safety override (philosophy.md 2.3) runs entirely outside this consideration.
     is_critical_change: bool = False
     safety_override: bool = False
     requires_user_approval: bool = False
@@ -272,16 +275,16 @@ class DecisionResult:
 
     def compute_requires_approval(self) -> bool:
         """
-        Kanonický výpočet requires_user_approval. Volá se explicitně z
-        decision_engine.py po naplnění is_critical_change a impact_score —
-        není to automatický property, aby bylo v testech vidět, kdy přesně
-        se pole nastavuje.
+        The canonical requires_user_approval computation. Called explicitly
+        from decision_engine.py after is_critical_change and impact_score
+        are populated -- not an automatic property, so tests can see
+        exactly when the field gets set.
         """
         return self.is_critical_change or self.impact_score.is_significant or self.safety_override
 
 
 # =============================================================================
-# Observations (write-only z pohledu runtime)
+# Observations (write-only from the runtime's perspective)
 # =============================================================================
 
 @dataclass(kw_only=True)
@@ -296,7 +299,7 @@ class ObservationRecord:
     raw_data: dict = field(default_factory=dict)
     flagged_for_review: bool = False
 
-    # Vyplňuje výhradně audit export nástroj, nikdy runtime.
+    # Filled in exclusively by the audit export tool, never by the runtime.
     reviewed_at: datetime | None = None
     review_notes: str | None = None
 
@@ -308,7 +311,7 @@ class ObservationRecord:
 @dataclass(kw_only=True)
 class Rule:
     id: str = field(default_factory=new_id)
-    rule_group_id: str = field(default_factory=new_id)   # nové pravidlo = nové group_id; nová verze = stejné group_id
+    rule_group_id: str = field(default_factory=new_id)   # a new rule = a new group_id; a new version = the same group_id
     version: int = 1
     title: str = ""
     description: str = ""
@@ -340,7 +343,7 @@ class ConsentRecord:
 
 
 # =============================================================================
-# Conversation (krátkodobá paměť / surový log)
+# Conversation (short-term memory / raw log)
 # =============================================================================
 
 @dataclass(kw_only=True)

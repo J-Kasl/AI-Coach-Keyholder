@@ -14,7 +14,7 @@ system is built on. Owns:
 
 Contains NO domain logic and NO knowledge of any specific table or
 entity — see `database/database.py` for the coach_keyholder-specific
-repository built on top of this (Fáze 1.2: that module now composes
+repository built on top of this (Phase 1.2: that module now composes
 this one instead of managing its own sqlite3 connections directly).
 """
 

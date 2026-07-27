@@ -1,16 +1,17 @@
 """
 core/config.py
 
-Centrální konfigurace a načítání secrets. Vědomě bez závislosti na
-python-dotenv — vlastní minimální loader nám dá plnou kontrolu nad chybovými
-hláškami (explicitní chyba při chybějící povinné proměnné, ne tichý None,
-který se projeví až hluboko v Discord/Ollama volání).
+Central configuration and secret loading. Deliberately without a
+dependency on python-dotenv -- our own minimal loader gives us full
+control over error messages (an explicit error for a missing required
+variable, rather than a silent None that only surfaces deep inside a
+Discord/Ollama call).
 
-.env soubor NIKDY nepatří do gitu — viz .env.example jako šablona.
-Discord token, případné Chaster/Apple Health klíče a další citlivé hodnoty
-žijí výhradně v .env, nikdy natvrdo v kódu.
+The .env file must NEVER go into git -- see .env.example as a template.
+The Discord token, any Chaster/Apple Health keys, and other sensitive
+values live exclusively in .env, never hardcoded.
 
-Použití:
+Usage:
     from core.config import Config
     config = Config.load()
     print(config.discord_token)
@@ -28,14 +29,14 @@ DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "coach_keyholder.db"
 
 
 class ConfigError(Exception):
-    """Vyhozeno, když chybí povinná konfigurační hodnota."""
+    """Raised when a required configuration value is missing."""
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
     """
-    Minimalistický .env parser: KEY=VALUE na řádek, # jako komentář,
-    prázdné řádky ignorovány, hodnoty se nezpracovávají (žádné escape
-    sekvence) — pro secrets a jednoduché konfigurace to stačí.
+    Minimalist .env parser: KEY=VALUE per line, # as a comment, blank
+    lines ignored, values are not further processed (no escape
+    sequences) -- sufficient for secrets and simple configuration.
     """
     values: dict[str, str] = {}
     if not path.exists():
@@ -63,27 +64,27 @@ class Config:
 
     # Ollama
     ollama_host: str = "http://localhost:11434"
-    ollama_model: str = "llama3.1"  # TBD dokud nepotvrdíš konkrétní model
+    ollama_model: str = "llama3.1"  # TBD until a specific model is confirmed
 
     # Database
     db_path: Path = DEFAULT_DB_PATH
-    backup_retention_count: int = 14  # kolik posledních automatických záloh ponechat
+    backup_retention_count: int = 14  # how many recent automatic backups to keep
 
-    # Integrace (volitelné — Fáze 7, zatím jen připraveno)
+    # Integrations (optional -- Phase 7, just scaffolded for now)
     chaster_api_token: str | None = None
     apple_health_api_key: str | None = None
 
-    # Obecné
+    # General
     log_level: str = "INFO"
-    quiet_hours_start: str = "22:00"   # pro budoucí scheduler (Fáze 5)
+    quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
     quiet_hours_end: str = "07:00"
 
     @classmethod
     def load(cls, env_path: Path | None = None) -> Config:
         """
-        Načte konfiguraci: nejdřív skutečné proměnné prostředí (mají přednost,
-        užitečné pro CI/kontejnery), pak doplní z .env souboru.
-        Vyhodí ConfigError, pokud chybí DISCORD_TOKEN.
+        Loads configuration: real environment variables first (they
+        take precedence, useful for CI/containers), then fills in from
+        the .env file. Raises ConfigError if DISCORD_TOKEN is missing.
         """
         env_path = env_path or DEFAULT_ENV_PATH
         file_values = _parse_env_file(env_path)
@@ -94,8 +95,8 @@ class Config:
         discord_token = get("DISCORD_TOKEN")
         if not discord_token:
             raise ConfigError(
-                f"DISCORD_TOKEN není nastaven. Zkopíruj .env.example do .env "
-                f"(očekávaná cesta: {env_path}) a doplň token bota."
+                f"DISCORD_TOKEN is not set. Copy .env.example to .env "
+                f"(expected path: {env_path}) and fill in the bot token."
             )
 
         db_path_str = get("DB_PATH")

@@ -32,11 +32,16 @@ __all__ = [
     "remaining_active_hours",
 ]
 
-# I5 — given explicitly by the architecture document.
+# I5 — given explicitly by the architecture document. NOT a bootstrap
+# default.
 MAX_TARGET_ACTIVE_HOURS = 336.0
 
-# NOT given a specific value anywhere in the architecture document —
-# this slice's own default. See this module's docstring.
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
+# NOT given a specific value anywhere in the architecture document --
+# this slice's own default. See this module's docstring. Directly
+# determines how long a base penalty lasts -- a strong personal-policy
+# candidate (plausibly user-owned), not merely a technical parameter.
 DEFAULT_BASE_DURATION_HOURS = 24.0
 
 

@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 006 — System Startup Lease (Fáze 2.4)
+-- Migration 006 — System Startup Lease (Phase 2.4)
 -- =============================================================================
 -- docs/architecture/system_state_machine.md Section 7 (LEASE-1).
 -- Single-row table: at most one process instance may hold a live lease
@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS system_startup_lease (
 );
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'System startup lease table (Faze 2.4)');

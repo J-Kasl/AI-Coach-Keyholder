@@ -28,19 +28,22 @@ from penalty_engine.models import (
     PenaltyWindow,
     PenaltyWindowNotFound,
     PenaltyWindowStatus,
+    RecoveryCreditDecision,
     ResolutionMethod,
+    new_id,
 )
-from penalty_engine.window import DEFAULT_BASE_DURATION_HOURS, MAX_TARGET_ACTIVE_HOURS, is_complete
+from penalty_engine.window import DEFAULT_BASE_DURATION_HOURS, MAX_TARGET_ACTIVE_HOURS, is_complete, target_active_hours
 from trust_manager.models import CooperationAssessment, SeverityTier
 from trust_manager.repository import TrustManager
 
 
-def _iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_iso(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+# _iso/_parse_iso: thin local aliases for the shared implementation
+# (infrastructure/time_format.py) -- kept as private names here so
+# every existing call site in this module is unchanged; consolidated
+# during the final architecture review pass (Phase 2.7) to remove five
+# identical copies of this pair across the codebase.
+from infrastructure.time_format import iso as _iso
+from infrastructure.time_format import parse_iso as _parse_iso
 
 
 def active_hours_elapsed_from_row(row, now: datetime) -> float:
@@ -348,6 +351,142 @@ class PenaltyEngine:
         was needed.
         """
         self.ensure_current_state(now)
+
+    # -------------------------------------------------------------------
+    # 3.4 — Recovery Credit Integration (applying
+    # recovery_plan_technical_design.md Section 6)
+    # -------------------------------------------------------------------
+
+    def record_recovery_credit_from_task_completion(
+        self, recovery_plan, completion_id: str, *, now: datetime,
+    ) -> RecoveryCreditDecision:
+        """
+        Direct/manual entry point -- reads via Recovery Plan's own
+        narrow API (get_recovery_task_completion()/get_recovery_task()/
+        get_recovery_plan(), recovery_plan_technical_design.md 2.3),
+        never a raw table read, BEFORE opening this method's own
+        transaction (sequential calls, not nested -- the same pattern
+        `start_window_if_eligible()` already uses for its own
+        pre-transaction reads). For the event-driven case (a consumer
+        handler already inside consume_event()'s transaction), use
+        `_record_recovery_credit_in_transaction` directly against the
+        handler's own already-open `tx` instead -- see
+        `recovery_plan/repository.py`'s `complete_task()` docstring for
+        why its event payload already carries `penalty_window_id`/
+        `credit_hours` directly, avoiding the need for that path to call
+        back into Recovery Plan's API at all.
+
+        `recovery_plan` is typed loosely (not imported at module level)
+        to avoid a hard import-time dependency between these two
+        sibling modules for what is, structurally, just duck-typed
+        access to three narrow read methods.
+        """
+        completion = recovery_plan.get_recovery_task_completion(completion_id)
+        if completion is None:
+            raise ValueError(f"No RecoveryTaskCompletion with id={completion_id!r}")
+        task = recovery_plan.get_recovery_task(completion.recovery_task_id)
+        plan = recovery_plan.get_recovery_plan(completion.recovery_plan_id)
+
+        def write(tx: Transaction, _state: object) -> RecoveryCreditDecision:
+            return self._record_recovery_credit_in_transaction(
+                tx, completion_id, plan.penalty_window_id, task.credit_hours, now,
+            )
+
+        def events(tx: Transaction, _state: object, result: RecoveryCreditDecision) -> None:
+            self._emit_recovery_credit_event(tx, result, now)
+
+        return apply_transition(self._core, write=write, events=events)
+
+    def _record_recovery_credit_in_transaction(
+        self, tx: Transaction, completion_id: str, penalty_window_id: str, proposed_hours: float, now: datetime,
+    ) -> RecoveryCreditDecision:
+        """
+        Runs entirely against the given, already-open `tx` -- never
+        opens its own transaction or calls another module's public API.
+        Safely callable from a consumer handler already inside
+        consume_event()'s transaction (system/startup.py's Recovery
+        Plan -> Penalty Engine wiring).
+
+        I26: `UNIQUE(completion_id)` on `recovery_credit_decisions`
+        (schema-enforced, not merely checked here) means a redelivered
+        `recovery_plan.task_completed` for the same completion raises
+        `sqlite3.IntegrityError` on the second attempt -- caught by
+        `consume_event()`'s own dedup (`domain_event_consumers`) in
+        normal operation, so this should never actually fire in
+        practice; the DB constraint is defense in depth, not the
+        primary guarantee (the same "two independent layers" pattern
+        already used for `TrustEvidence`'s
+        `UNIQUE(source_entity_type, source_entity_id, evidence_type)`,
+        TI25).
+
+        Always writes a RecoveryCreditDecision, eligible or not,
+        capped or not -- so a zero-hour outcome is never silently
+        indistinguishable from "this completion was never processed"
+        (the same discipline as ExtensionDecision). Writes to
+        `recovery_credit_ledger` ONLY when `credited_hours > 0`.
+        """
+        window_row = tx.fetch_one("SELECT * FROM penalty_windows WHERE id = ?", (penalty_window_id,))
+        if window_row is None:
+            raise PenaltyWindowNotFound(penalty_window_id)
+        window = self._row_to_window(window_row)
+
+        # I3: recovery_credit_capacity_hours = target_active_hours / 2,
+        # computed here fresh from this module's own state -- never
+        # read from Recovery Plan's own (snapshot) copy of the same
+        # figure, and never independently re-derived by any other
+        # module (2.11).
+        capacity = target_active_hours(window) / 2.0
+        already_earned = window.recovery_credits_earned_hours
+        remaining_capacity = max(0.0, capacity - already_earned)
+        credited_hours = min(proposed_hours, remaining_capacity)
+        capacity_limited = credited_hours < proposed_hours
+
+        decision = RecoveryCreditDecision(
+            created_at=now, completion_id=completion_id, penalty_window_id=penalty_window_id,
+            proposed_hours=proposed_hours, credited_hours=credited_hours, capacity_limited=capacity_limited,
+            explanation=(
+                f"Task completion processed; proposed {proposed_hours}h"
+                + (f", capped to {credited_hours}h by remaining Recovery Credit capacity." if capacity_limited
+                   else ", credited in full.")
+            ),
+        )
+        tx.execute(
+            """
+            INSERT INTO recovery_credit_decisions
+                (id, created_at, completion_id, penalty_window_id, proposed_hours, credited_hours, capacity_limited, explanation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (decision.id, _iso(now), completion_id, penalty_window_id, proposed_hours, credited_hours,
+             int(capacity_limited), decision.explanation),
+        )
+
+        if credited_hours > 0:
+            tx.execute(
+                "INSERT INTO recovery_credit_ledger (id, penalty_window_id, credited_hours, source_completion_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (new_id(), penalty_window_id, credited_hours, completion_id, _iso(now)),
+            )
+            tx.execute(
+                "UPDATE penalty_windows SET recovery_credits_earned_hours = recovery_credits_earned_hours + ? WHERE id = ?",
+                (credited_hours, penalty_window_id),
+            )
+
+        return decision
+
+    def _emit_recovery_credit_event(self, tx: Transaction, decision: RecoveryCreditDecision, now: datetime) -> None:
+        write_event(
+            tx,
+            DomainEvent(
+                event_type="recovery_credit_decision.recorded", source_module="penalty_engine",
+                payload={
+                    "recovery_credit_decision_id": decision.id,
+                    "completion_id": decision.completion_id,
+                    "penalty_window_id": decision.penalty_window_id,
+                    "credited_hours": decision.credited_hours,
+                    "capacity_limited": decision.capacity_limited,
+                },
+                occurred_at=now,
+            ),
+        )
 
 
     def freeze(
@@ -676,4 +815,5 @@ class PenaltyEngine:
             extensions_hours=row["extensions_hours"],
             accumulated_active_hours=row["accumulated_active_hours"],
             active_period_started_at=_parse_iso(row["active_period_started_at"]) if row["active_period_started_at"] else None,
+            recovery_credits_earned_hours=row["recovery_credits_earned_hours"],
         )

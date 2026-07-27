@@ -1,19 +1,20 @@
 """
 bot/discord_bot.py
 
-Základní kostra Discord bota pro AI Coach & Keyholder — Fáze 0.
+Basic Discord bot skeleton for AI Coach & Keyholder — Phase 0.
 
-Zodpovědnost v této fázi je záměrně omezená na ověření komunikační vrstvy:
-  - připojení k Discordu,
-  - příjem zpráv,
-  - uložení každé zprávy do conversation_messages (krátkodobá paměť),
-  - jednoduchá potvrzovací odpověď, ŽÁDNÁ AI logika zatím.
+Responsibility in this phase is deliberately limited to verifying the
+communication layer:
+  - connecting to Discord,
+  - receiving messages,
+  - saving every message to conversation_messages (short-term memory),
+  - a simple acknowledgement reply, NO AI logic yet.
 
-Napojení na Coach/Keyholder/Decision engine přijde ve Fázi 1+ na místě
-označeném `# TODO(fáze 1)` níže — tak, aby bylo zřejmé, kde se bot napojí
-na core/ vrstvu, až bude hotová.
+The connection to the Coach/Keyholder/Decision engine will land in
+Phase 1+ at the spot marked `# TODO(phase 1)` below -- so it's clear
+where the bot will hook into the core/ layer once it's ready.
 
-Spuštění:
+Running:
     python -m bot.discord_bot
 """
 
@@ -39,15 +40,15 @@ class CoachKeyholderBot(discord.Client):
         self.clock = clock
 
     async def on_ready(self) -> None:
-        logger.info("Přihlášen jako %s (id=%s)", self.user, self.user.id if self.user else "?")
-        logger.info("Připraven na %d serverech.", len(self.guilds))
+        logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
+        logger.info("Ready on %d server(s).", len(self.guilds))
 
     async def on_message(self, message: discord.Message) -> None:
-        # Ignoruj vlastní zprávy bota, ať se nezacyklí
+        # Ignore the bot's own messages so it doesn't loop on itself
         if message.author == self.user:
             return
 
-        # Krátkodobá paměť: každou zprávu uživatele zalogujeme
+        # Short-term memory: log every user message
         self.db.save_conversation_message(
             ConversationMessage(
                 created_at=self.clock.now(),
@@ -58,15 +59,15 @@ class CoachKeyholderBot(discord.Client):
             )
         )
 
-        # TODO(fáze 1): místo pevné odpovědi zavolat:
+        # TODO(phase 1): instead of a fixed reply, call:
         #   1. context_engine -> ContextSnapshot
         #   2. coach_engine + keyholder_engine -> CoachAssessment / KeyholderAssessment
         #   3. decision_engine -> DecisionResult
-        #   4. ai/personality.py -> syntéza jednoho hlasu (+ vysvětlení, pokud
-        #      decision.requires_user_approval nebo impact_score.is_significant)
-        # Zatím jen ověřujeme, že komunikační vrstva funguje.
+        #   4. ai/personality.py -> synthesize a single voice (+ explanation, if
+        #      decision.requires_user_approval or impact_score.is_significant)
+        # For now, we're only verifying that the communication layer works.
         reply_text = (
-            "Zaznamenáno. (Fáze 0 — zatím bez AI logiky, jen ověřuju spojení.)"
+            "Recorded. (Phase 0 -- no AI logic yet, just verifying the connection.)"
         )
 
         sent = await message.channel.send(reply_text)
@@ -84,7 +85,7 @@ class CoachKeyholderBot(discord.Client):
 
 def build_bot(config: Config, db: Database, clock: Clock) -> CoachKeyholderBot:
     intents = discord.Intents.default()
-    intents.message_content = True  # nutné pro čtení obsahu zpráv (privileged intent)
+    intents.message_content = True  # required to read message content (privileged intent)
     return CoachKeyholderBot(config, db, clock, intents=intents)
 
 
@@ -105,15 +106,15 @@ def main() -> None:
     clock = SystemClock()
     db = Database(config.db_path, backup_retention=config.backup_retention_count)
 
-    # Migrace (samy si zajistí zálohu před aplikací, pokud DB už existuje)
+    # Migrations (they take care of their own backup before applying, if the DB already exists)
     applied = db.migrate(now=clock.now())
     if applied:
-        logger.info("Aplikovány migrace: %s", applied)
+        logger.info("Applied migrations: %s", applied)
 
-    # Max 1 automatická záloha za den, i mimo migrace
+    # At most 1 automatic backup per day, even outside migrations
     daily_backup = db.ensure_daily_backup(now=clock.now())
     if daily_backup:
-        logger.info("Vytvořena denní záloha: %s", daily_backup)
+        logger.info("Created daily backup: %s", daily_backup)
 
     bot = build_bot(config, db, clock)
     bot.run(config.discord_token, log_handler=None)

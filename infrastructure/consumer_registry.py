@@ -3,7 +3,7 @@ infrastructure/consumer_registry.py
 
 The shared, domain-agnostic consumer dispatch layer
 (implementation_conventions.md Section 5's "consumer framework",
-Fáze 1.4's deferred item). Built directly on
+Phase 1.4's deferred item). Built directly on
 infrastructure.outbox's claim/consume/publish primitives -- this module
 adds only the missing piece: mapping an event_type string to the
 handler(s) that should run, so a caller does not have to know, at every

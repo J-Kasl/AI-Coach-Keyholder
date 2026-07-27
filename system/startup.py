@@ -145,6 +145,18 @@ def build_consumer_registry(
     registry.register("penalty_window.completed", "recovery_plan", on_penalty_window_completed)
     registry.register("penalty_window.target_duration_changed", "recovery_plan", on_penalty_window_target_duration_changed)
 
+    def on_recovery_plan_task_completed(tx, event) -> None:
+        decision = penalty_engine._record_recovery_credit_in_transaction(
+            tx,
+            event.payload["recovery_task_completion_id"],
+            event.payload["penalty_window_id"],
+            event.payload["credit_hours"],
+            event.occurred_at,
+        )
+        penalty_engine._emit_recovery_credit_event(tx, decision, event.occurred_at)
+
+    registry.register("recovery_plan.task_completed", "penalty_engine", on_recovery_plan_task_completed)
+
     return registry
 
 

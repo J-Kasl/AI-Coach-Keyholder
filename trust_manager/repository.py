@@ -3,7 +3,7 @@ trust_manager/repository.py
 
 Trust Manager Slice 1 — the repository built on
 infrastructure.database.Database, the same composition pattern
-database/database.py already established (Fáze 1.2): this class opens
+database/database.py already established (Phase 1.2): this class opens
 no sqlite3 connections of its own, and every write goes through
 `self._core.transaction()`/`apply_transition()`.
 
@@ -15,7 +15,7 @@ is deferred.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
@@ -57,12 +57,13 @@ DEFAULT_NEW_DOMAIN_SCORE = 0.6
 DEFAULT_NEW_DOMAIN_CONFIDENCE = 0.15
 
 
-def _iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_iso(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+# _iso/_parse_iso: thin local aliases for the shared implementation
+# (infrastructure/time_format.py) -- kept as private names here so
+# every existing call site in this module is unchanged; consolidated
+# during the final architecture review pass (Phase 2.7) to remove five
+# identical copies of this pair across the codebase.
+from infrastructure.time_format import iso as _iso
+from infrastructure.time_format import parse_iso as _parse_iso
 
 
 class TrustManager:

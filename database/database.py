@@ -1,20 +1,20 @@
 """
 database/database.py
 
-Přístupová vrstva nad SQLite. Zodpovídá za:
-  - aplikaci migrací (sekvenční .sql soubory v database/migrations/),
-  - převod mezi dataclass modely (database/models.py) a DB řádky,
-    včetně (de)serializace *_json sloupců.
+Access layer over SQLite. Responsible for:
+  - applying migrations (sequential .sql files in database/migrations/),
+  - converting between dataclass models (database/models.py) and DB
+    rows, including (de)serialization of *_json columns.
 
-Fáze 1.2: samotné otevírání connections a transakční hranice (BEGIN/
-COMMIT/ROLLBACK) už tahle třída nedělá sama — deleguje na
-infrastructure.database.Database (viz infrastructure/README.md).
-Tahle třída je repository nad sdílenou transakční vrstvou, ne
-paralelní implementace connection managementu. Žádná metoda zde
-nevolá commit()/rollback() přímo — to zůstává výhradně v
-infrastructure.database.Database.transaction().
+Phase 1.2: this class no longer opens connections or manages
+transaction boundaries (BEGIN/COMMIT/ROLLBACK) itself -- it delegates
+to infrastructure.database.Database (see infrastructure/README.md).
+This class is a repository built on top of the shared transaction
+layer, not a parallel implementation of connection management. No
+method here calls commit()/rollback() directly -- that remains
+exclusively in infrastructure.database.Database.transaction().
 
-Použití:
+Usage:
     from database.database import Database
     from infrastructure.clock import SystemClock
 
@@ -25,9 +25,10 @@ Použití:
     snapshot_id = db.save_context_snapshot(snapshot)
     snapshot = db.get_context_snapshot(snapshot_id)
 
-Vědomě NEpoužíváme ORM (viz odůvodnění v konverzaci k Fázi 0) — hybridní
-schéma (normalizovaná pole + JSON) je s raw sqlite3 přímočařejší a čitelnější
-pro audit, než by bylo přes abstrakci navíc.
+We deliberately do NOT use an ORM (see the reasoning from the Phase 0
+design discussion) -- the hybrid schema (normalized fields + JSON) is
+more straightforward and more readable for audits with raw sqlite3 than
+it would be behind an extra layer of abstraction.
 """
 
 from __future__ import annotations
@@ -89,8 +90,9 @@ class Database:
         # policy — normal production use just lets this construct its own.
         self._core = core if core is not None else CoreDatabase(self.db_path)
 
-        # Zálohy defaultně vedle databáze, ve stejné (gitignored) data/ složce,
-        # takže updaty zdrojového kódu se jich nedotknou (viz .gitignore).
+        # Backups default to living next to the database, in the same
+        # (gitignored) data/ folder, so source-code updates never touch them
+        # (see .gitignore).
         self.backup_dir = Path(backup_dir) if backup_dir else self.db_path.parent / "backups"
         self.backup_retention = backup_retention
 
@@ -100,26 +102,28 @@ class Database:
 
     def migrate(self, now: datetime) -> list[int]:
         """
-        Aplikuje všechny dosud neaplikované migrace z database/migrations/
-        v pořadí podle čísla v názvu souboru (001_, 002_, ...).
-        Vrací seznam čísel verzí, které byly nově aplikovány.
+        Applies all migrations from database/migrations/ not yet applied,
+        in order by the number in the filename (001_, 002_, ...).
+        Returns the list of version numbers that were newly applied.
 
-        Pravidlo pro autory migrací: migrace smí pouze přidávat (CREATE TABLE
-        IF NOT EXISTS, ALTER TABLE ADD COLUMN, nové indexy). Nikdy nesmí
-        obsahovat DROP TABLE/COLUMN ani jinou destruktivní operaci nad daty
-        — update programu nikdy nesmí vyžadovat ani způsobit ztrátu
-        uživatelských dat (viz database/migrations/README.md).
+        Rule for migration authors: a migration may only add (CREATE
+        TABLE IF NOT EXISTS, ALTER TABLE ADD COLUMN, new indexes). It
+        must never contain DROP TABLE/COLUMN or any other destructive
+        data operation -- updating the application must never require
+        or cause the loss of user data (see database/migrations/README.md).
 
-        Pokud databázový soubor už existuje a existují nové migrace k
-        aplikaci, vytvoří se nejdřív záloha (reason='pre_migration'),
-        bez ohledu na to, jestli dnes už proběhla denní záloha — migrace
-        je rizikový okamžik a zaslouží si vlastní zálohu navíc.
+        If the database file already exists and there are new
+        migrations to apply, a backup is created first
+        (reason='pre_migration'), regardless of whether a daily backup
+        has already run today -- a migration is a risky moment and
+        deserves its own extra backup.
 
-        `now` (timezone-aware UTC, z injektovaného Clocku) se použije jen
-        pro případnou pre_migration zálohu — použití `raw_connection()`,
-        ne `transaction()`, je záměrné: `executescript()` má vlastní
-        (implicitní) commit chování neslučitelné s naším BEGIN IMMEDIATE
-        (viz infrastructure/database.py, `raw_connection()` docstring).
+        `now` (timezone-aware UTC, from the injected Clock) is used only
+        for the possible pre_migration backup -- using `raw_connection()`,
+        not `transaction()`, is deliberate: `executescript()` has its
+        own (implicit) commit behavior incompatible with our BEGIN
+        IMMEDIATE (see infrastructure/database.py, `raw_connection()`
+        docstring).
         """
         migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
 
@@ -132,7 +136,7 @@ class Database:
                 if row and row["v"] is not None:
                     current_version = row["v"]
             except sqlite3.OperationalError:
-                pass  # tabulka schema_version zatím neexistuje -> první migrace ji založí
+                pass  # the schema_version table doesn't exist yet -> the first migration will create it
 
             pending = [
                 path for path in migration_files
@@ -142,11 +146,12 @@ class Database:
         if not pending:
             return []
 
-        # Záloha před migrací — jen pokud DB už měla dřív aplikovanou nějakou
-        # verzi schématu (current_version > 0). Na úplně prvním spuštění
-        # SQLite vytvoří prázdný soubor už při připojení výše, ale zálohovat
-        # prázdnou databázi bez dat nemá smysl, proto se rozlišuje podle
-        # current_version, ne podle pouhé existence souboru.
+        # Backup before migrating -- only if the DB already had some
+        # schema version applied before (current_version > 0). On the
+        # very first run, SQLite already creates an empty file when we
+        # connect above, but backing up an empty database with no data
+        # is pointless, so we distinguish by current_version, not by mere
+        # file existence.
         if current_version > 0:
             self.create_backup(reason="pre_migration", now=now)
 
@@ -165,16 +170,16 @@ class Database:
     # -------------------------------------------------------------------
 
     def create_backup(self, reason: str, now: datetime) -> Path | None:
-        """Vytvoří zálohu a rovnou aplikuje rotační politiku."""
+        """Creates a backup and immediately applies the rotation policy."""
         path = backup_module.create_backup(self.db_path, self.backup_dir, reason, now=now)
         backup_module.rotate_backups(self.backup_dir, keep=self.backup_retention)
         return path
 
     def ensure_daily_backup(self, now: datetime) -> Path | None:
         """
-        Zaručí max. 1 automatickou zálohu za den. Volat při startu aplikace
-        (nezávisle na tom, jestli proběhly migrace — pokrývá i běžný denní
-        provoz bez schematických změn).
+        Guarantees at most 1 automatic backup per day. Call at application
+        startup (independent of whether migrations ran -- this also
+        covers ordinary daily operation with no schema changes).
         """
         path = backup_module.ensure_daily_backup(self.db_path, self.backup_dir, now=now)
         if path is not None:
@@ -416,7 +421,7 @@ class Database:
             )
 
     def get_pending_approvals(self) -> list[DecisionResult]:
-        """Rozhodnutí čekající na schválení uživatele — pro Discord approval_flow."""
+        """Decisions awaiting user approval -- for the Discord approval_flow."""
         with self._core.transaction() as tx:
             rows = tx.execute(
                 "SELECT id FROM decision_results WHERE approval_status = ?",
@@ -425,7 +430,7 @@ class Database:
         return [self.get_decision_result(r["id"]) for r in rows]
 
     # -------------------------------------------------------------------
-    # Observations (runtime pouze zapisuje — viz observations/ modul)
+    # Observations (the runtime only writes -- see the observations/ module)
     # -------------------------------------------------------------------
 
     def save_observation(self, o: ObservationRecord) -> str:
@@ -450,7 +455,7 @@ class Database:
         return o.id
 
     def get_unreviewed_observations(self) -> list[ObservationRecord]:
-        """Používá výhradně audit export nástroj (observations/export.py), ne runtime."""
+        """Used exclusively by the audit export tool (observations/export.py), never by the runtime."""
         with self._core.transaction() as tx:
             rows = tx.execute(
                 "SELECT * FROM observations WHERE reviewed_at IS NULL ORDER BY created_at"
@@ -473,7 +478,7 @@ class Database:
         return result
 
     def mark_observation_reviewed(self, observation_id: str, now: datetime, notes: str | None = None) -> None:
-        """Volá výhradně audit export / review nástroj."""
+        """Called exclusively by the audit export / review tool."""
         with self._core.transaction() as tx:
             tx.execute(
                 "UPDATE observations SET reviewed_at = ?, review_notes = ? WHERE id = ?",
@@ -486,8 +491,8 @@ class Database:
 
     @staticmethod
     def _insert_rule_row(tx: Transaction, rule: Rule) -> None:
-        """Sdílená INSERT logika pro rules — použita jak přímo (save_rule),
-        tak jako součást větší atomické operace (supersede_rule,
+        """Shared INSERT logic for rules -- used both directly (save_rule)
+        and as part of a larger atomic operation (supersede_rule,
         record_rule_change_with_consent)."""
         tx.execute(
             """
@@ -515,8 +520,8 @@ class Database:
 
     @staticmethod
     def _insert_consent_row(tx: Transaction, c: ConsentRecord) -> None:
-        """Sdílená INSERT logika pro consent_log — použita jak přímo
-        (save_consent_record), tak jako součást record_rule_change_with_consent."""
+        """Shared INSERT logic for consent_log -- used both directly
+        (save_consent_record) and as part of record_rule_change_with_consent."""
         tx.execute(
             """
             INSERT INTO consent_log
@@ -543,13 +548,14 @@ class Database:
 
     def supersede_rule(self, new_rule: Rule) -> str:
         """
-        Vytvoří novou verzi pravidla a deaktivuje předchozí verzi ve stejné
-        transakci. new_rule.supersedes_id musí být nastaveno na ID předchozí verze.
+        Creates a new rule version and deactivates the previous version in
+        the same transaction. new_rule.supersedes_id must be set to the
+        ID of the previous version.
 
-        Refaktorováno na apply_transition() (infrastructure/database.py) —
-        stejné chování jako dřív (dva SQL příkazy v jedné transakci), teď
-        postavené na sdíleném generickém helperu místo vlastní ad-hoc
-        kompozice.
+        Refactored onto apply_transition() (infrastructure/database.py) --
+        same behavior as before (two SQL statements in one transaction),
+        now built on the shared generic helper instead of its own ad hoc
+        composition.
         """
 
         def write(tx: Transaction, _state: object) -> str:
@@ -565,24 +571,25 @@ class Database:
 
     def record_rule_change_with_consent(self, new_rule: Rule, consent: ConsentRecord) -> tuple[str, str]:
         """
-        Atomicky zapíše novou verzi pravidla (případně deaktivuje
-        předchozí, stejně jako supersede_rule) SPOLU s jejím
-        ConsentRecordem — philosophy.md 2.5 (Consent & Control): změna
-        pravidla nikdy není legitimní bez odpovídajícího souhlasu, takže
-        tahle metoda existuje právě proto, aby ty dva zápisy nikdy nemohly
-        vzniknout nezávisle na sobě (ani při chybě uprostřed).
+        Atomically writes a new rule version (optionally deactivating the
+        previous one, just like supersede_rule) TOGETHER WITH its
+        ConsentRecord -- philosophy.md 2.5 (Consent & Control): a rule
+        change is never legitimate without corresponding consent, so
+        this method exists specifically so those two writes can never
+        happen independently of each other (not even on a failure
+        partway through).
 
-        Skutečná ukázka apply_transition() přes DVĚ různé tabulky
-        (rules + consent_log), ne jen dvakrát stejnou tabulku jako
-        supersede_rule.
+        A genuine demonstration of apply_transition() across TWO
+        different tables (rules + consent_log), not just the same table
+        twice like supersede_rule.
 
-        Fáze 1.4: první reálné využití `events=` slotu (mimo testy).
-        Není to katalogový event z `domain_events_catalog.md` — ten
-        katalog popisuje budoucí doménové moduly (Trust Manager,
-        Penalty Engine, ...), které ještě neexistují jako kód. Jde o
-        poctivě pojmenovanou demonstraci na existující Fázi 0 tabulce,
-        ne o předstírání, že `rules`/`consent_log` jsou plnohodnotný
-        doménový modul podle katalogu.
+        Phase 1.4: the first real use of the `events=` slot (outside of
+        tests). This is not a cataloged event from
+        `domain_events_catalog.md` -- that catalog describes future
+        domain modules (Trust Manager, Penalty Engine, ...) that do not
+        exist as code yet. This is an honestly-named demonstration on
+        the existing Phase 0 table, not a pretense that `rules`/`consent_log`
+        are a full domain module per the catalog.
         """
 
         def write(tx: Transaction, _state: object) -> tuple[str, str]:
@@ -704,7 +711,7 @@ class Database:
     def get_recent_messages(
         self, discord_channel_id: str, limit: int = 20
     ) -> list[ConversationMessage]:
-        """Krátkodobá paměť: posledních N zpráv v kanálu, chronologicky."""
+        """Short-term memory: the last N messages in a channel, chronologically."""
         with self._core.transaction() as tx:
             rows = tx.execute(
                 """

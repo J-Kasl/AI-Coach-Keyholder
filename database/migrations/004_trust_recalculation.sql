@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 004 — Trust Manager, Slice 2: Score Recalculation Pipeline (Fáze 2.2)
+-- Migration 004 — Trust Manager, Slice 2: Score Recalculation Pipeline (Phase 2.2)
 -- =============================================================================
 -- docs/architecture/trust_manager_technical_design.md Sections 2.6, 3.1-3.6.
 -- See trust_manager/README.md for exactly what this slice covers.
@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_trust_recalc_evidence_recalc ON trust_recalculati
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (4, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Trust Manager Slice 2: score recalculation pipeline (Faze 2.2)');

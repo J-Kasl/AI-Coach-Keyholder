@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 007 — Extension (Fáze 2.5)
+-- Migration 007 — Extension (Phase 2.5)
 -- =============================================================================
 -- docs/architecture/extension_technical_design.md.
 -- Additive only (implementation_conventions.md Section 12): adds a
@@ -43,7 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_extension_decisions_incident ON extension_decisio
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Extension: extension_decisions, incident_consumption.rule_group_id (Faze 2.5)');

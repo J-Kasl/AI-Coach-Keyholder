@@ -37,7 +37,7 @@ class TestNoHiddenClock:
 
         assert not hasattr(models_module, "utc_now"), (
             "utc_now() must be fully removed -- Clock is the only source "
-            "of time now (Fáze 1.2)"
+            "of time now (Phase 1.2)"
         )
 
     @pytest.mark.parametrize(

@@ -74,6 +74,7 @@ class PenaltyWindow:
     extensions_hours: float = 0.0
     accumulated_active_hours: float = 0.0
     active_period_started_at: datetime | None = None
+    recovery_credits_earned_hours: float = 0.0
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -100,3 +101,23 @@ class PenaltyWindowNotFound(Exception):
     def __init__(self, penalty_window_id: str) -> None:
         super().__init__(f"No PenaltyWindow with id={penalty_window_id!r}")
         self.penalty_window_id = penalty_window_id
+
+
+@dataclass(frozen=True, kw_only=True)
+class RecoveryCreditDecision:
+    """
+    Append-only (penalty_window_technical_design.md 3.4, applying
+    recovery_plan_technical_design.md Section 6). Always written for
+    every RecoveryTaskCompletion processed, regardless of outcome --
+    the same "never silently indistinguishable from not-yet-processed"
+    discipline as ExtensionDecision.
+    """
+    id: str = field(default_factory=new_id)
+    created_at: datetime
+    completion_id: str          # UNIQUE -- I26 primary guarantee
+    penalty_window_id: str
+
+    proposed_hours: float
+    credited_hours: float        # may be 0
+    capacity_limited: bool
+    explanation: str             # required, non-empty regardless of credited_hours

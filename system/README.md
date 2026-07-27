@@ -5,7 +5,7 @@ Finding 4 describe: owns startup sequencing and cross-module event
 wiring, no domain state of its own, no business decisions
 (`philosophy.md` 2.11 applied to orchestration itself).
 
-## What this delivers (Fáze 2.4-2.6)
+## What this delivers (Phase 2.4-2.6)
 
 - **`infrastructure/consumer_registry.py`** — the Consumer Framework:
   `ConsumerRegistry` (event_type → handler(s) mapping) and
@@ -19,7 +19,7 @@ wiring, no domain state of its own, no business decisions
 - **`system/startup.py`** — `on_system_startup()`, calling, in order:
   1. `TrustManager.recover_trust_manager_state()`
   2. `PenaltyEngine.recover_penalty_window_state()`
-  3. `RecoveryPlanManager.recover_recovery_plan_state()` (Fáze 2.6 —
+  3. `RecoveryPlanManager.recover_recovery_plan_state()` (Phase 2.6 —
      a consistency check, depends only on step 2)
   4. `process_pending_events()` (the outbox publisher, last, so events
      from steps 1-3 are delivered immediately)
@@ -33,7 +33,7 @@ wiring, no domain state of its own, no business decisions
   Manager's `incident.confirmation_changed` (filtered to
   `new_confirmation=CONFIRMED`), replacing what was previously only
   directly-callable via `PenaltyEngine.start_window_if_eligible()`.
-- **A second, independent consumer wiring (Fáze 2.6)** — Recovery Plan
+- **A second, independent consumer wiring (Phase 2.6)** — Recovery Plan
   reacts to all five of Penalty Engine's own `penalty_window.*`
   lifecycle events, the same consumer-handler discipline applied a
   second time by a different pair of modules. See
@@ -65,7 +65,7 @@ into the publishing module's live API mid-transaction. Concretely:
   field (`trust_manager/repository.py`) — previously only
   `incident_id`/`previous_confirmation`/`new_confirmation` — so a
   consumer never needs to ask Trust Manager anything further about the
-  Incident it already has an id for. (Fáze 2.5 later extended this
+  Incident it already has an id for. (Phase 2.5 later extended this
   further with `rule_group_id`/`intrinsic_severity`/`cooperation_*` for
   Extension's own needs — see `penalty_engine/README.md`.)
 - `PenaltyEngine` gained
@@ -75,7 +75,7 @@ into the publishing module's live API mid-transaction. Concretely:
   never calls another module's public API. This is what
   `build_consumer_registry()`'s handler actually calls. (Named
   `_start_window_from_confirmed_incident_in_transaction` when first
-  introduced in this phase; renamed and extended in Fáze 2.5 once
+  introduced in this phase; renamed and extended in Phase 2.5 once
   Extension unified window-starting and window-extending into one
   consumption path.)
 
@@ -97,10 +97,10 @@ same discipline applies — an event's payload must carry everything its
 known/anticipated consumers need, and a handler must never call another
 module's transaction-opening public method from inside its own. This
 precedent was already exercised twice more within this same project,
-not merely anticipated: Fáze 2.5 (Extension) extended
+not merely anticipated: Phase 2.5 (Extension) extended
 `incident.confirmation_changed`'s payload further (`rule_group_id`,
 `intrinsic_severity`, `cooperation_*`) for `should_extend()`'s own
-needs, and Fáze 2.6 (Recovery Plan) wired a *second, independent*
+needs, and Phase 2.6 (Recovery Plan) wired a *second, independent*
 consumer relationship (Penalty Engine → Recovery Plan) needing no
 payload extension at all, since the triggering `penalty_window.*`
 events were already shaped with enough information — see
@@ -110,7 +110,7 @@ to every future Activity Authorization/Hygiene Privilege/Goal
 Management consumer.
 
 **A second, related finding surfaced only once a second consumer
-existed** (Fáze 2.6): a single `process_pending_events()` call
+existed** (Phase 2.6): a single `process_pending_events()` call
 originally processed only the batch of events that existed at the
 moment it was invoked — a cascade (one handler's side effect publishing
 a new event a *different* handler needs to react to) would not
@@ -124,7 +124,7 @@ and the test that verifies it.
   Hygiene Privilege, Goal Management) — added when their respective
   modules exist.
 - ~~**A registry entry for `should_extend()`/Extension**~~ — **delivered
-  in Fáze 2.5**: `should_extend()` is wired into the SAME
+  in Phase 2.5**: `should_extend()` is wired into the SAME
   `"incident.confirmation_changed"` → `"penalty_engine"` registration
   as window-starting — one unified consumption handler, not a second
   registry entry, since Extension is Penalty Engine's own logic, not a

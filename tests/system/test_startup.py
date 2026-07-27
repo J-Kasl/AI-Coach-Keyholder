@@ -235,7 +235,60 @@ class TestRecoveryPlanEndToEnd:
         assert plan.status == RecoveryPlanStatus.COMPLETED
 
 
+class TestRecoveryCreditEndToEnd:
+    """The full chain, one level deeper: Incident -> Penalty Window ->
+    Recovery Plan -> (Coach proposes/completes a task) ->
+    recovery_plan.task_completed -> Penalty Engine's Recovery Credit,
+    entirely through real event wiring for the Trust Manager/Penalty
+    Engine/Recovery Plan legs, with only the Coach-facing task
+    propose/complete calls made directly (there is no event that
+    triggers those -- a human/Coach decision starts that part)."""
 
+    def test_recovery_credit_recorded_via_real_wiring(self, core: CoreDatabase) -> None:
+        _confirm_incident(core)
+        clock = FrozenClock(FIXED_TIME + timedelta(minutes=1))
+        on_system_startup(core, "test-process", clock)
+
+        pe = PenaltyEngine(core.db_path, core=core)
+        window = pe.get_active_or_frozen_penalty_window()
+        rp = RecoveryPlanManager(core.db_path, core=core)
+        plan = rp.get_recovery_plan_for_window(window.id)
+
+        task = rp.propose_task(plan.id, "Journal", "Reflect", credit_hours=3.0, now=FIXED_TIME + timedelta(hours=1))
+        rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=2))
+
+        # recovery_plan.task_completed is now pending -- a further
+        # on_system_startup() call (the next reconciliation cycle) is
+        # what dispatches it to Penalty Engine's real consumer handler.
+        clock2 = FrozenClock(FIXED_TIME + timedelta(hours=2, minutes=1))
+        on_system_startup(core, "test-process-2", clock2)
+
+        with core.transaction() as tx:
+            decision_row = tx.fetch_one("SELECT * FROM recovery_credit_decisions WHERE completion_id IN (SELECT id FROM recovery_task_completions WHERE recovery_task_id = ?)", (task.id,))
+        assert decision_row is not None
+        assert decision_row["credited_hours"] == 3.0
+
+    def test_window_earned_hours_updated_via_real_wiring(self, core: CoreDatabase) -> None:
+        _confirm_incident(core)
+        clock = FrozenClock(FIXED_TIME + timedelta(minutes=1))
+        on_system_startup(core, "test-process", clock)
+
+        pe = PenaltyEngine(core.db_path, core=core)
+        window = pe.get_active_or_frozen_penalty_window()
+        rp = RecoveryPlanManager(core.db_path, core=core)
+        plan = rp.get_recovery_plan_for_window(window.id)
+
+        task = rp.propose_task(plan.id, "Journal", "Reflect", credit_hours=3.0, now=FIXED_TIME + timedelta(hours=1))
+        rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=2))
+
+        clock2 = FrozenClock(FIXED_TIME + timedelta(hours=2, minutes=1))
+        on_system_startup(core, "test-process-2", clock2)
+
+        refreshed = pe.get_active_or_frozen_penalty_window()
+        assert refreshed.recovery_credits_earned_hours == 3.0
+
+
+class TestStartupLeaseIntegration:
     def test_second_concurrent_startup_raises(self, core: CoreDatabase) -> None:
         acquire_system_startup_lease(core, "already-running", FIXED_TIME, timedelta(minutes=5))
         clock = FrozenClock(FIXED_TIME + timedelta(seconds=1))

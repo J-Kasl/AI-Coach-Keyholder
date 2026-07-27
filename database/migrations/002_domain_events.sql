@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 002 — Transactional Outbox (Fáze 1.4)
+-- Migration 002 — Transactional Outbox (Phase 1.4)
 -- =============================================================================
 -- The shared, domain-agnostic outbox every module writes cross-module
 -- events to (implementation_conventions.md Section 5). Owned in code by
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS domain_event_consumers (
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Transactional outbox: domain_events, domain_event_consumers (Faze 1.4)');

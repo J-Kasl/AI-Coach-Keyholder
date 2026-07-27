@@ -43,11 +43,35 @@ Canonical sections implemented: **1 (the subset below), 2.1-2.6, 3.1,
 - **`occurred_during_recovery_task`** — always `False` in this slice
   (EXT-10; Recovery Plan does not exist to signal it).
 
+## Bootstrap defaults (governance classification)
+
+Added during the Phase 2.7 architecture review, distinguishing "who
+decided this exists" (the developer, by necessity) from "who should
+have the right to change it going forward" (mostly undecided). Tagged
+in code with `# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):`,
+verified by `tests/test_bootstrap_default_tags.py` (a format guard
+only -- resolving these is not required or scheduled).
+
+| Constant | Created by | Intended owner | Current change mechanism | Why bootstrap default |
+|---|---|---|---|---|
+| `DEFAULT_BASE_DURATION_HOURS` (`window.py`) | developer | undecided, plausibly **user** | code | Directly determines how long a base penalty lasts -- a felt behavioral consequence, not a technical parameter. |
+| `BASE_HOURS_BY_SEVERITY`, `REPETITION_INCREMENT_HOURS` (`extension.py`) | developer | undecided, plausibly **user** | code | Same category as `DEFAULT_BASE_DURATION_HOURS` -- how many hours a given severity/repetition adds is directly experienced, not internal. |
+| `MINIMUM_RETAINED_FRACTION` (`extension.py`) | developer | undecided -- genuinely ambiguous between **user** and **system-safety-policy** | code | EXT-5's floor exists to keep a MAJOR/CRITICAL Incident's consequence from being erased by cooperation/context -- arguably a safety guarantee the *system* should own, not a preference an individual should be able to weaken. Marked undecided rather than pre-assigned for this reason. |
+| `_SELF_DISCLOSED_MITIGATION`, `_ACTIVE_COOPERATION_MITIGATION`, `_RECOVERY_TASK_MITIGATION` (`extension.py`) | developer | undecided, same ambiguity as `MINIMUM_RETAINED_FRACTION` | code | These three numbers set how much cooperation is "worth" against that same floor -- inseparable from its governance question. |
+
+**Not tagged, and why:** `MAX_TARGET_ACTIVE_HOURS` (336, `window.py`) is
+given explicitly by the architecture document (I5) -- architecture-owned,
+not a bootstrap default. `_is_high_cooperation()`'s "requires BOTH
+factors" rule is the same kind of undecided-ownership choice as the
+constants above, but has no single numeric constant to attach a tag
+to -- noted in its own comment in prose instead.
+
 ## Design notes
 
 - **Four TBD parameter groups from `extension_technical_design.md`
   Section 10**, this slice's own defaults, flagged (not silently
-  presented as architecture-decided):
+  presented as architecture-decided) -- see the governance table above
+  for who might eventually own each one:
   - `BASE_HOURS_BY_SEVERITY` — MINOR=4.0, MODERATE=12.0, MAJOR=24.0,
     CRITICAL=48.0h.
   - `REPETITION_INCREMENT_HOURS` — 6.0h per additional same-rule

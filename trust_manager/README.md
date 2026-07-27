@@ -57,18 +57,35 @@ below), 13, 14**.
   or updates it. The architecture document does not specify how trend
   is derived, so nothing was invented here rather than guess.
 
+## Bootstrap defaults (governance classification)
+
+Added during the Phase 2.7 architecture review, after distinguishing
+"who decided this exists" (almost always: the developer, by necessity,
+to make the architecture executable) from "who should have the right
+to change it going forward" (genuinely undecided for several
+constants). Tagged in code with `# BOOTSTRAP_DEFAULT(owner=undecided,
+mechanism=code):`, verified by `tests/test_bootstrap_default_tags.py`
+(a format guard only -- it never requires these to be resolved).
+
+| Constant | Created by | Intended owner | Current change mechanism | Why bootstrap default |
+|---|---|---|---|---|
+| `COOPERATION_SELF_DISCLOSURE_OFFSET`, `COOPERATION_ACTIVE_RESOLUTION_OFFSET` (`severity.py`) | developer | undecided, plausibly **user** | code | Directly shapes how forgiving the system is toward one person's cooperative behavior -- a personal-policy question, not a technical one. |
+| `severity_base_weight` (`severity.py`) | developer | undecided, plausibly **user** | code | Same category as the offsets above -- how severely each tier affects Trust is a felt behavioral consequence, not an implementation detail. |
+| `MAX_ABS_EFFECTIVE_WEIGHT` (`recalculation.py`) | developer | undecided, plausibly **architecture** or **system-safety-policy** | code | 3.3/TI9 mandates *some* cap exists but gives no number; this one reads more like a numerical-stability safeguard than a felt personal-policy choice -- flagged for that reason, not pre-assigned to the user. |
+| `CONFIDENCE_K` (`recalculation.py`) | developer | undecided, plausibly **architecture** | code | Shapes the mathematical curve of a derived quantity (confidence), not a directly-felt consequence -- same reasoning as `MAX_ABS_EFFECTIVE_WEIGHT`. |
+
+**Not tagged, and why:** `MAX_ABSOLUTE_DELTA_PER_RECALCULATION` (0.15)
+and `CONFIDENCE_ROLLING_WINDOW_DAYS` (180) are given explicit numeric
+values directly in `trust_manager_technical_design.md` (search that
+document for these exact names) -- architecture-owned, not bootstrap
+defaults. `DEFAULT_NEW_DOMAIN_SCORE`/`DEFAULT_NEW_DOMAIN_CONFIDENCE`
+(`repository.py`) are likewise given explicit values by the document
+(3.4). `_MIN_INCIDENT_RAW_WEIGHT` (`severity.py`) is a technical
+sign-guarantee clamp, not a policy value -- see its own comment for why
+it was deliberately excluded.
+
 ## Slice 2 design notes
 
-- **Two constants without a specified value in the architecture
-  document**, flagged rather than silently invented (see
-  `trust_manager/recalculation.py`'s own docstring for the full
-  reasoning): `MAX_ABS_EFFECTIVE_WEIGHT = 0.5` (3.3/TI9 says "capped
-  below a threshold," no number given) and `CONFIDENCE_K = 0.3` (3.6
-  says "the exact constant k is a parameter to be tuned," no number
-  given). Both are ordinary module-level constants, easy to revisit —
-  flagged specifically so a future reviewer knows these two, unlike
-  every other constant in this module, were not transcribed from the
-  architecture document but chosen by this implementation.
 - **Why the 'incident' trigger recalculates inside `confirm_incident()`'s
   own transaction, rather than via a separate, later call**: the
   evidence being consumed and its consumption are produced by the exact

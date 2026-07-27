@@ -61,7 +61,7 @@ class TestMigrate:
         database = Database(tmp_path / "test.db", backup_dir=tmp_path / "backups")
         first = database.migrate(now=FIXED_TIME)
         second = database.migrate(now=FIXED_TIME)
-        assert first == [1, 2, 3, 4, 5, 6, 7, 8]  # 001..008
+        assert first == [1, 2, 3, 4, 5, 6, 7, 8, 9]  # 001..009
         assert second == []
 
 
@@ -238,7 +238,7 @@ class TestRuleVersioningAndAtomicMultiTableWrite:
         assert any(c.id == consent_id for c in history)
 
     def test_record_rule_change_with_consent_writes_a_domain_event(self, db: Database) -> None:
-        """Fáze 1.4: confirms the events= slot actually fires and writes
+        """Phase 1.4: confirms the events= slot actually fires and writes
         a real row to the shared outbox, not just in isolated infra tests."""
         rule = Rule(created_at=FIXED_TIME, title="Sleep by 23:00", created_by=CreatedBy.USER)
         consent = ConsentRecord(

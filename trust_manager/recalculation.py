@@ -31,22 +31,39 @@ __all__ = [
 ]
 
 # 3.5 — Score Transition Invariants (TI19: |delta| never exceeds this,
-# new_score always clamped to [0.0, 1.0])
+# new_score always clamped to [0.0, 1.0]). Given explicitly by the
+# architecture document (0.15) -- NOT a bootstrap default.
 MAX_ABSOLUTE_DELTA_PER_RECALCULATION = 0.15
 
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
 # 3.3/TI9 — effective_weight = raw_weight * evidence_confidence, "capped
 # below a threshold." The architecture document does not commit to a
 # specific number; this is this slice's own default, flagged as such.
+# Unlike COOPERATION_*_OFFSET/severity_base_weight in severity.py, this
+# reads more like a numerical-stability safeguard (bounding any single
+# row's influence on a recalculation) than a personal-policy knob --
+# plausibly architecture-owned or system-safety-owned rather than
+# user-owned. Marked owner=undecided rather than pre-assigned, exactly
+# because that classification hasn't actually been made yet.
 MAX_ABS_EFFECTIVE_WEIGHT = 0.5
 
-# 3.6 — the rolling window confidence is computed over.
+# 3.6 — the rolling window confidence is computed over. Given
+# explicitly by the architecture document (180 days) -- NOT a bootstrap
+# default.
 CONFIDENCE_ROLLING_WINDOW_DAYS = 180
 
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
 # 3.6 — "the exact constant k is a parameter to be tuned." This slice's
 # own default: with k=0.3, a single piece of evidence yields confidence
 # ~0.26; confidence approaches 1.0 as evidence accumulates, with
 # diminishing returns, as the architecture document specifies the shape
-# of (not the exact constant for).
+# of (not the exact constant for). Like MAX_ABS_EFFECTIVE_WEIGHT above,
+# this shapes the mathematical curve of a computed quantity (confidence)
+# rather than a directly-felt behavioral consequence -- plausibly a
+# technical/architecture-owned tuning constant rather than something an
+# individual user would set. Marked owner=undecided, not pre-assigned.
 CONFIDENCE_K = 0.3
 
 

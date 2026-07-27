@@ -92,6 +92,10 @@ class ExtensionDecision:
 # This slice's own default: "high cooperation" requires BOTH factors,
 # not either alone -- a deliberately strict bar, since it is what
 # exempts an isolated MINOR/MODERATE Incident from Extension entirely.
+# This is the same kind of undecided-ownership policy choice as the
+# bootstrap-default-tagged constants below, but has no single constant
+# to attach a tag to (it's the AND itself, not a number) -- noted here
+# in prose instead.
 def _is_high_cooperation(cooperation: CooperationAssessment) -> bool:
     return cooperation.self_disclosed and cooperation.active_cooperation_in_resolution
 
@@ -118,12 +122,23 @@ def determine_extension_eligibility(context: ExtensionContext) -> tuple[bool, Ex
 # this slice's own defaults.
 # -----------------------------------------------------------------------
 
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
+# Directly determines how many hours an Incident of a given severity
+# adds to a Penalty Window -- a strong personal-policy candidate
+# (plausibly user-owned), same category as
+# penalty_engine/window.py's DEFAULT_BASE_DURATION_HOURS.
 BASE_HOURS_BY_SEVERITY: dict[SeverityTier, float] = {
     SeverityTier.MINOR: 4.0,
     SeverityTier.MODERATE: 12.0,
     SeverityTier.MAJOR: 24.0,
     SeverityTier.CRITICAL: 48.0,
 }
+
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
+# Same category as BASE_HOURS_BY_SEVERITY above -- how much repeated
+# violations of the same rule add per occurrence.
 REPETITION_INCREMENT_HOURS = 6.0
 
 
@@ -146,6 +161,17 @@ def calculate_base_magnitude(severity: SeverityTier, repetition_count_in_window:
 # if the document had already committed to them.
 # -----------------------------------------------------------------------
 
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
+# Unlike BASE_HOURS_BY_SEVERITY/REPETITION_INCREMENT_HOURS above, this
+# one is genuinely ambiguous between personal policy and system safety
+# policy: EXT-5's floor exists specifically to protect against a
+# MAJOR/CRITICAL Incident's consequence being mathematically erased by
+# cooperation/context, which is arguably a safety guarantee the system
+# itself should own (not something an individual user's preference
+# should be able to weaken below), rather than a personal-policy value
+# like the base magnitudes above. Marked owner=undecided rather than
+# assumed user-owned, specifically because of this ambiguity.
 MINIMUM_RETAINED_FRACTION: dict[SeverityTier, float] = {
     SeverityTier.MAJOR: 0.5,
     SeverityTier.CRITICAL: 0.7,
@@ -154,11 +180,16 @@ MINIMUM_RETAINED_FRACTION: dict[SeverityTier, float] = {
     # erased by cooperation/context; it is not a general guarantee.
 }
 
+# BOOTSTRAP_DEFAULT(owner=undecided, mechanism=code):
+# Temporary executable value pending an explicit ownership decision.
 # This slice's own graduated mitigation: each factor independently
 # softens magnitude by a fixed amount, summed and capped at 1.0 (a
 # reduction of 1.0 would erase the base entirely, which the
 # MINIMUM_RETAINED_FRACTION floor above still catches for MAJOR/CRITICAL
-# regardless of how large this sum gets).
+# regardless of how large this sum gets). Same personal-policy-vs-
+# safety-policy ambiguity as MINIMUM_RETAINED_FRACTION above, since
+# these three numbers directly determine how much cooperation is
+# "worth" against the floor that constant sets.
 _SELF_DISCLOSED_MITIGATION = 0.3
 _ACTIVE_COOPERATION_MITIGATION = 0.3
 _RECOVERY_TASK_MITIGATION = 0.2

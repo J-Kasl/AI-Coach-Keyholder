@@ -6,7 +6,7 @@
 > **This is a consistency-pass document, not a new design phase.** Its
 > only purpose: every event exists exactly once, has exactly one
 > canonical definition and one publisher, before the transactional
-> outbox (Fáze 1.4, `implementation_conventions.md` Section 5) is built
+> outbox (Phase 1.4, `implementation_conventions.md` Section 5) is built
 > against it. Building this catalog's first version surfaced five real
 > cross-document inconsistencies (Section 5) — all five are now
 > **resolved**, applied directly to the specific documents where each
@@ -239,7 +239,7 @@ consumer to deliver it to, is the clearest candidate in this system for
 
 **Not resolved here, deliberately:** this is a judgment call about
 outbox scope, not a naming inconsistency like Findings 1–5, and
-belongs to whoever designs Fáze 1.4, with the tradeoff stated plainly:
+belongs to whoever designs Phase 1.4, with the tradeoff stated plainly:
 keeping them in the shared outbox costs a small amount of redundant
 storage and zero consumers today, in exchange for never having to
 retrofit outbox delivery later if a consumer *does* eventually want
@@ -247,7 +247,7 @@ retrofit outbox delivery later if a consumer *does* eventually want
 query the table when I care." Simplicity (one mechanism for every
 event, no special case) is a real argument for leaving them in;
 minimalism (don't persist-and-route what nothing reads) is a real
-argument for taking them out. Flagged so Fáze 1.4 makes this choice
+argument for taking them out. Flagged so Phase 1.4 makes this choice
 knowingly rather than by default.
 
 Every other "Cross-Module Today?: No" row in Section 3 is category (3)
@@ -422,15 +422,15 @@ for it, and none should yet.
 
 ## 9. What This Means for the Future Transactional Outbox (Preview, Not Design)
 
-With all five naming/publisher findings resolved, Fáze 1.4 now has a
+With all five naming/publisher findings resolved, Phase 1.4 now has a
 settled input: every row in Section 3's registry becomes a literal
 `event_type` string constant and a `source_module` value, with no
 naming decision left open. `apply_transition()`'s already-present
 `events=` parameter (`infrastructure/database.py`) gets its first real
-callables, one module at a time, starting with whichever module Fáze
+callables, one module at a time, starting with whichever module Phase
 1.4 targets first.
 
-**Finding 6 — resolved at the start of Fáze 1.4:**
+**Finding 6 — resolved at the start of Phase 1.4:**
 `hygiene_privilege.policy_evaluated` and
 `.override_determination_recorded` remain in the shared `domain_events`
 outbox, despite having no consumer today. Simplicity won over

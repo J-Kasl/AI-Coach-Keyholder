@@ -181,8 +181,13 @@ class TestTaskLifecycle:
     def test_rpt5_task_completed_event_is_published_no_ledger_write(
         self, rp: RecoveryPlanManager, core: CoreDatabase,
     ) -> None:
-        """RP-1/RP-8: this module never writes recovery_credit_ledger --
-        only publishes the event the (future) Penalty Engine consumes."""
+        """RP-1/RP-8: this module never writes recovery_credit_ledger
+        itself -- only publishes the event the Penalty Engine's
+        Recovery Credit integration (Phase 2.7) consumes. Checked here
+        by confirming zero rows exist immediately after
+        complete_task(), before any consumer has had a chance to run --
+        this module's own write scope, not the table's mere existence
+        (which migration 009 now creates regardless)."""
         _create_penalty_window(core)
         plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
         task = rp.propose_task(plan.id, "Journal", "desc", credit_hours=3.0, now=FIXED_TIME)
@@ -190,15 +195,9 @@ class TestTaskLifecycle:
 
         with core.transaction() as tx:
             event_row = tx.fetch_one("SELECT * FROM domain_events WHERE event_type = 'recovery_plan.task_completed'")
-            ledger_exists = tx.fetch_one(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='recovery_credit_ledger'"
-            )
+            ledger_rows = tx.fetch_all("SELECT * FROM recovery_credit_ledger")
         assert event_row is not None
-        # recovery_credit_ledger doesn't even exist as a table in this
-        # slice (it belongs to the deferred Recovery Credit integration,
-        # penalty_window_technical_design.md Section 3.4) -- the
-        # strongest possible proof this module never wrote to it.
-        assert ledger_exists is None
+        assert ledger_rows == []
 
     def test_withdraw_task(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
         _create_penalty_window(core)

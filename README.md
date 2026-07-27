@@ -1,109 +1,136 @@
 # AI Coach & Keyholder
 
-Osobní lokální AI systém kombinující dlouhodobého kouče a systém
-konzistence/zodpovědnosti. Viz [`philosophy.md`](philosophy.md) pro
-principy, kterým musí odpovídat každé rozhodnutí a každá budoucí úprava,
-a [`docs/architecture/`](docs/architecture/) pro celou architektonickou
-baseline (devět technických návrhů + integrační audit +
-implementační konvence — všechny se statusem *Architecture baseline —
+A personal, local AI system combining a long-term coach with a
+consistency/accountability system. See [`philosophy.md`](philosophy.md)
+for the principles every decision and every future change must satisfy,
+and [`docs/architecture/`](docs/architecture/) for the full
+architecture baseline (nine technical designs + an integration audit +
+implementation conventions -- all with status *Architecture baseline --
 approved for implementation*).
 
-**Oprava (Fáze 1.3):** `philosophy.md` v repozitáři byl dlouho zastaralá
-kopie z Fáze 0 (česká, před anglickým překladem, bez sekcí 2.9–2.11).
-Nahrazeno finální schválenou verzí (v1.12.1). Zbylých devět
-architektonických dokumentů (`system_state_machine.md`, sedm doménových
-návrhů, `implementation_conventions.md`) nikdy nebylo fyzicky součástí
-repozitáře vůbec — jen existovaly jako výstupy návrhové konverzace.
-Teď žijí v `docs/architecture/`, protože traceability disciplína
-(`implementation_conventions.md` Section 16 — "každý PR musí být
-odůvodnitelný odkazem na konkrétní sekci") vyžaduje, aby ten dokument
-byl skutečně součástí repozitáře, ne externí artefakt.
+## Architecture at a glance
 
-## Stav projektu
+The system is event-driven: domain modules never call each other's
+internals directly. Each module owns its own state, publishes domain
+events when that state changes, and reacts to other modules' events
+through narrow, named consumer handlers -- never by reaching into
+another module's tables or opening a second database transaction
+mid-reaction. See `implementation_conventions.md` Section 3 and
+`system/README.md` for the precise rules this follows, including a real
+constraint (`NestedTransactionError`) discovered while wiring the first
+cross-module consumer, and how it shaped every consumer written since.
 
-**Fáze 0 — základ.** Hotovo:
+The current, fully implemented lifecycle:
 
-- adresářová struktura (`core/`, `ai/`, `database/`, `bot/`, `integrations/`, `observations/`)
-- `database/models.py` — dataclass kontrakty (ContextSnapshot, CoachAssessment,
-  KeyholderAssessment, DecisionResult, ObservationRecord, Rule, ConsentRecord, ...)
-- `database/migrations/001_initial_schema.sql` — SQLite schéma (hybridní:
-  normalizovaná pole + JSON, verzování pravidel, consent_log, observations)
-- `database/database.py` — přístupová vrstva (migrace + save/get pro
-  všechny entity)
-- `core/config.py` — načítání konfigurace a secrets z `.env`
-- `database/backup.py` — zálohování přes SQLite online backup API, max.
-  1 automatická denní záloha, záloha vždy před aplikací migrace (pokud DB
-  už dřív měla nějakou verzi schématu), jednoduchá rotace (default: 14
-  posledních záloh, `BACKUP_RETENTION_COUNT` v `.env`)
-- `database/migrations/README.md` — závazná politika: migrace nikdy nesmí
-  být destruktivní vůči uživatelským datům
-- `bot/discord_bot.py` — základní Discord bot: připojení, logování zpráv
-  do krátkodobé paměti, zatím **bez AI logiky** (přijde ve Fázi 1)
+```
+Incident (Trust Manager)
+    │  confirmed
+    ▼
+Trust Score (recalculation pipeline)
+    │  incident.confirmation_changed
+    ▼
+Penalty Window (Penalty Engine)
+    │  should_extend() -- Extension
+    ▼
+Recovery Plan
+    │  task completed
+    ▼
+Recovery Credit (back into Penalty Engine)
+```
 
-Vše výše bylo otestováno end-to-end (round-trip uložení/načtení pro
-každou entitu, import a inicializace bota, zálohovací scénáře včetně
-denního limitu, pre-migration zálohy a rotace).
+Three domain modules (Trust Manager, Penalty Engine, Recovery Plan) and
+one composition layer (`system/`) exist today, fully wired together
+through real, tested events -- not mocks. Each module's own README
+documents exactly what it covers, what's deliberately deferred, and any
+real architectural findings surfaced while building it:
 
-**Fáze 1.1 — Clock.** Hotovo:
+- [`trust_manager/README.md`](trust_manager/README.md) -- Incident
+  lifecycle, confirmation, severity assessment, the trust score
+  recalculation pipeline.
+- [`penalty_engine/README.md`](penalty_engine/README.md) -- the
+  PenaltyWindow state machine, freeze-as-a-set-of-reasons, Extension
+  (`should_extend()`), and Recovery Credit.
+- [`recovery_plan/README.md`](recovery_plan/README.md) -- the Recovery
+  Plan lifecycle as a pure reaction to Penalty Window events, plus
+  Coach-facing task management.
+- [`system/README.md`](system/README.md) -- the startup orchestrator,
+  the consumer/dispatch framework, and the composition-layer wiring
+  between all of the above.
+- [`infrastructure/README.md`](infrastructure/README.md) -- the shared
+  `Clock`, `Database`/`Transaction`, and transactional outbox that
+  every module above is built on.
 
-- `infrastructure/clock.py` — `Clock` (Protocol), `SystemClock`
-  (produkční implementace), `FrozenClock` (testovací implementace se
-  `advance()`/`set()`)
-- `tests/infrastructure/test_clock.py` — 20 testů, včetně strážního
-  testu, který mechanicky kontroluje, že žádný produkční kód mimo
-  `infrastructure/clock.py` nevolá `datetime.now()`/`datetime.utcnow()`
-  přímo
-- `infrastructure/README.md` — proč `Clock` existuje, jak souvisí s
-  architektonickou baseline, a co (vědomě) zatím chybí
+## Project status
 
-Poznámka ke stylu: `infrastructure/` a jeho testy jsou psané anglicky
-(komentáře i docstringy), na rozdíl od zbytku Fáze 0 — reflektuje to
-rozhodnutí "English jako kanonický jazyk projektu" přijaté během
-návrhové fáze (viz `philosophy.md`). Fáze 0 se zpětně nepřepisuje, nový
-kód od Fáze 1 dál už anglicky je.
+**288 passing tests** across the whole repository (`pytest`), including
+a repository-wide guard test that mechanically confirms no production
+code outside `infrastructure/clock.py` calls `datetime.now()`/
+`datetime.utcnow()` directly.
 
-**Known follow-up:** *(vyřešeno ve Fázi 1.2, viz níže)*
+Nine sequential database migrations are applied so far
+(`database/migrations/001` through `009`), covering the initial Phase 0
+schema, the transactional outbox, Trust Manager, the trust
+recalculation pipeline, Penalty Engine, the startup lease, Extension,
+Recovery Plan, and Recovery Credit. See
+[`database/migrations/README.md`](database/migrations/README.md) for
+the hard rule migrations must follow (never destructive to user data).
 
-**Fáze 1.2 — Database wrapper a transakční hranice.** Hotovo:
+### Implementation order so far
 
-- `infrastructure/database.py` — `Database` (sdílený transakční core:
-  connection management, pragmy, `transaction()`), `Transaction` (jen
-  `execute/executemany/fetch_one/fetch_all` — žádné doménové metody),
-  `NestedTransactionError` (nesting je explicitně zakázán, ne nejasný),
-  `apply_transition()` (load→validate→write→events→commit; `events`
-  slot připravený na budoucí outbox beze změny volajících míst),
-  `raw_connection()` (zdokumentovaná výjimka pro migrace přes
-  `executescript()`, které má jiné commit chování)
-- `database/database.py` — přestavěno na kompozici nad
-  `infrastructure.database.Database` místo vlastního connection
-  managementu; nová atomická metoda `record_rule_change_with_consent()`
-  (Rule + ConsentRecord v jedné transakci, `philosophy.md` 2.5) jako
-  reálná ukázka `apply_transition()` přes dvě různé tabulky
-- `database/models.py` — `utc_now()` odstraněno, `created_at` je teď
-  povinný `kw_only` konstruktorový parametr na všech 8 dataclassech s
-  timestampem — model už nikdy sám negeneruje svůj vznik
-- `database/backup.py` — `now: datetime` explicitní parametr všude
-  místo přímého `datetime.now()`
-- `bot/discord_bot.py` — injektuje `SystemClock`, `created_at` se
-  dodává explicitně při konstrukci `ConversationMessage`
-- `tests/infrastructure/test_database.py`, `tests/database/` (nové) —
-  42 + 56 testů; `KNOWN_PRE_CLOCK_VIOLATIONS` je teď prázdná množina —
-  **nula produkčních výjimek** ze strážního testu
+1. ~~`infrastructure/clock.py` -- `Clock`, `SystemClock`, `FrozenClock`~~ **done**
+2. ~~Database wrapper (the transactional `apply_transition` helper)~~ **done**
+3. ~~`domain_events` schema + transactional outbox (claim/publish)~~ **done (Phase 1.4)**
+4. ~~Consumer framework (dispatch by `event_type`)~~ **done (Phase 2.4)**
+5. ~~Startup orchestrator (`on_system_startup()`, `system_startup_lease`)~~ **done (Phase 2.4)**
+6. ~~Trust Manager Slice 1 (Domain Registry, Incident, Confirmation, Severity)~~ **done (Phase 2.1)**
+7. ~~Trust Manager Slice 2 (score recalculation pipeline)~~ **done (Phase 2.2)**
+8. ~~Penalty Engine Slice 1 (state machine, freeze-as-set-of-reasons, natural completion)~~ **done (Phase 2.3)**
+9. ~~Extension (`should_extend()`, the unified consumption path)~~ **done (Phase 2.5)**
+10. ~~Recovery Plan (lifecycle as a reaction to Penalty Window events)~~ **done (Phase 2.6)**
+11. ~~Recovery Credit integration (Penalty Engine consumes `recovery_plan.task_completed`)~~ **done (Phase 2.7)**
 
-Důležité vyjasnění (architektonické review): `Clock` neřeší "čas do
-odemčení" — o odemčení rozhoduje stav domény, Chaster je až následná
-technická integrace. `Clock` je jednotný zdroj času jen pro interní
-události systému (vznik incidentu, Penalty Window, cooldowny, platnost
-autorizace, historie, pořadí událostí).
+**Next up:** Goal Manager, the first module independent of the Trust
+Manager -> Penalty Engine -> Recovery Plan -> Recovery Credit branch
+above, which is now a complete, closed lifecycle.
 
-**Zásady dat a záloh (ověřeno):**
-- Uživatelská data (`data/coach_keyholder.db`, `data/backups/`) jsou mimo
-  git (`.gitignore`) — update programu (`git pull`) se jich nedotkne.
-- Migrace jsou výhradně aditivní (viz `database/migrations/README.md`).
-- Runtime (bot, budoucí core enginy) nikdy nečte z `observations/` ani
-  z audit exportů — jde o čistě write-only vrstvu z pohledu runtime.
+### Phase 0 foundation (unchanged since the original design)
 
-## Instalace
+- Directory structure (`core/`, `ai/`, `database/`, `bot/`,
+  `integrations/`, `observations/`).
+- `database/models.py` -- the original dataclass contracts
+  (ContextSnapshot, CoachAssessment, KeyholderAssessment,
+  DecisionResult, ObservationRecord, Rule, ConsentRecord, ...).
+- `database/migrations/001_initial_schema.sql` -- the SQLite schema
+  (hybrid: normalized fields + JSON, rule versioning, consent_log,
+  observations).
+- `database/database.py` -- the access layer (migrations + save/get for
+  every entity), later rebuilt in Phase 1.2 to compose on top of
+  `infrastructure.database.Database` rather than managing its own
+  connections.
+- `core/config.py` -- loading configuration and secrets from `.env`.
+- `database/backup.py` -- backups via SQLite's online backup API, at
+  most 1 automatic daily backup, always a backup before applying a
+  migration (if the DB already had some schema version), simple
+  rotation (default: the 14 most recent backups,
+  `BACKUP_RETENTION_COUNT` in `.env`).
+- `bot/discord_bot.py` -- a basic Discord bot: connects, logs messages
+  to short-term memory, **no AI logic yet** (arrives in Phase 1+).
+
+All of the above was tested end-to-end (round-trip save/load for every
+entity, bot import and initialization, backup scenarios including the
+daily limit, pre-migration backups, and rotation).
+
+**Data and backup policy (verified):**
+- User data (`data/coach_keyholder.db`, `data/backups/`) is outside git
+  (`.gitignore`) -- updating the application (`git pull`) never touches
+  it.
+- Migrations are exclusively additive (see
+  `database/migrations/README.md`).
+- The runtime (bot, future core engines) never reads from
+  `observations/` or from audit exports -- that's a write-only layer
+  from the runtime's perspective.
+
+## Installation
 
 ```bash
 python -m venv .venv
@@ -111,282 +138,113 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Pro vývoj a spouštění testů:
+For development and running tests:
 
 ```bash
 pip install -r requirements-dev.txt
 pytest
 ```
 
-Vyžaduje Python 3.13 (kód používá `enum.StrEnum` a moderní typing — funguje
-i na 3.11+, ale cíleno na 3.13 dle domluvy).
+Requires Python 3.13 (the code uses `enum.StrEnum` and modern typing --
+it would work on 3.11+, but 3.13 is the agreed target).
 
-## Konfigurace
+## Configuration
 
 ```bash
 copy .env.example .env
 ```
 
-Doplň do `.env` alespoň `DISCORD_TOKEN` (Discord Developer Portal → tvá
-aplikace → Bot → Token). Bota je potřeba pozvat na server s oprávněním
-číst a psát zprávy, a v Developer Portal zapnout **Message Content Intent**
-(bez něj bot neuvidí obsah zpráv — `discord_bot.py` na to spoléhá).
+Fill in at least `DISCORD_TOKEN` in `.env` (Discord Developer Portal ->
+your application -> Bot -> Token). The bot needs to be invited to a
+server with permission to read and send messages, and **Message
+Content Intent** needs to be enabled in the Developer Portal (without
+it the bot won't see message content -- `discord_bot.py` relies on it).
 
-## Spuštění
+## Running
 
 ```bash
 python -m bot.discord_bot
 ```
 
-Při prvním spuštění se automaticky vytvoří `data/coach_keyholder.db` a
-aplikují se migrace. Bot zatím jen loguje zprávy a odpovídá potvrzovací
-hláškou — ověřuje se tím komunikační vrstva, ne AI logika.
+On first run, `data/coach_keyholder.db` is created automatically and
+migrations are applied. For now the bot only logs messages and replies
+with an acknowledgement -- this verifies the communication layer, not
+the AI logic.
 
-## Struktura
+## Structure
 
 ```
-core/            # coach_engine, keyholder_engine, decision_engine, config (business logika — Fáze 1+)
-ai/              # ollama_client, personality, analysis (Fáze 1+)
+core/            # coach_engine, keyholder_engine, decision_engine, config (business logic -- Phase 1+)
+ai/              # ollama_client, personality, analysis (Phase 1+)
 database/        # models.py, database.py, migrations/
-infrastructure/  # sdílená cross-cutting vrstva (Clock, Database, Outbox;
-                 # consumer framework, startup orchestrator přijdou dál)
-trust_manager/   # první doménový modul (Slice 1+2 — viz trust_manager/README.md)
-penalty_engine/  # druhý doménový modul (Slice 1 + Extension — viz penalty_engine/README.md)
-recovery_plan/   # třetí doménový modul (viz recovery_plan/README.md)
-system/          # composition layer: startup orchestrator, cross-module wiring (viz system/README.md)
-docs/architecture/  # architektonická baseline: system_state_machine.md,
-                     # sedm doménových návrhů, implementation_conventions.md,
+infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
+                 # Consumer Registry, Startup Lease)
+trust_manager/   # first domain module (Slice 1+2 -- see trust_manager/README.md)
+penalty_engine/  # second domain module (Slice 1 + Extension + Recovery Credit -- see penalty_engine/README.md)
+recovery_plan/   # third domain module (see recovery_plan/README.md)
+system/          # composition layer: startup orchestrator, cross-module wiring (see system/README.md)
+docs/architecture/  # architecture baseline: system_state_machine.md,
+                     # seven domain technical designs, implementation_conventions.md,
                      # domain_events_catalog.md
-bot/             # discord_bot.py, approval_flow.py (Fáze 6)
-integrations/    # chaster.py, apple_health.py (Fáze 7)
-observations/    # audit export (write-only z pohledu runtime — Fáze 3+)
-tests/           # pytest, struktura zrcadlí balíčky (tests/infrastructure/, tests/trust_manager/, ...)
-philosophy.md    # referenční principy projektu — čti první
+bot/             # discord_bot.py, approval_flow.py (Phase 6)
+integrations/    # chaster.py, apple_health.py (Phase 7)
+observations/    # audit export (write-only from the runtime's perspective -- Phase 3+)
+tests/           # pytest, structure mirrors the packages (tests/infrastructure/, tests/trust_manager/, ...)
+philosophy.md    # the project's reference principles -- read this first
 ```
 
-## Další kroky (Fáze 1 — Infrastructure)
+## Development history
 
-Podle `implementation_conventions.md` (Architecture Baseline) a
-`system_state_machine.md` Section 7:
+Each phase below is summarized briefly; the module-level READMEs
+linked above are the authoritative, detailed record of what each one
+covers, what's deferred, and any real findings.
 
-1. ~~`infrastructure/clock.py` — `Clock`, `SystemClock`, `FrozenClock`~~ **hotovo**
-2. ~~Database wrapper (transakční `apply_transition` helper)~~ **hotovo**
-3. ~~`domain_events` schéma + transactional outbox (claim/publish)~~ **hotovo (Fáze 1.4)**
-4. ~~Consumer framework (dispatch podle `event_type`)~~ **hotovo (Fáze 2.4)**
-5. ~~Startup orchestrator (`on_system_startup()`, `system_startup_lease`)~~ **hotovo (Fáze 2.4)**
-6. ~~Trust Manager Slice 1 (Domain Registry, Incident, Confirmation, Severity)~~ **hotovo (Fáze 2.1)**
-7. ~~Trust Manager Slice 2 (score recalculation pipeline)~~ **hotovo (Fáze 2.2)**
-8. ~~Penalty Engine Slice 1 (state machine, freeze-as-set-of-reasons, natural completion)~~ **hotovo (Fáze 2.3)**
-9. ~~Extension (`should_extend()`, sjednocená konzumační cesta)~~ **hotovo (Fáze 2.5)**
-10. ~~Recovery Plan (lifecycle jako reakce na Penalty Window eventy)~~ **hotovo (Fáze 2.6)**
-
-Projekt teď sleduje konzistentní pořadí: Philosophy → Infrastructure →
-Trust Manager → Penalty Engine → Extension → System Composition Layer →
-Recovery Plan. Tři doménové moduly (Trust Manager, Penalty Engine,
-Recovery Plan) a jedna kompoziční vrstva (`system/`) jsou hotové a
-navzájem propojené přes reálné, otestované eventy. Další v pořadí:
-**Recovery Credit integrace** do Penalty Engine (spotřebuje
-`recovery_plan.task_completed`, dokončí `record_recovery_credit_from_task_completion()`
-z `penalty_window_technical_design.md` Section 3.4), nebo **Goal
-Manager**, který je na zbytku systému nezávislý.
-
-**Fáze 2.5 — Extension.** Hotovo (viz `penalty_engine/README.md`):
-
-- `database/migrations/007_extension.sql` — `extension_decisions` tabulka
-  + `incident_consumption.rule_group_id` sloupec (aditivní migrace)
-- `penalty_engine/extension.py` — čisté funkce `should_extend()` (4 fáze:
-  Eligibility → Base Magnitude → Mitigation → Capacity Cap), s explicitně
-  flagovanými vlastními defaulty pro všechny 4 TBD parametry z dokumentu
-- **Sjednocená konzumační cesta** – `start_window_if_eligible()` a
-  event-driven konzument teď volají stejnou
-  `_consume_confirmed_incident_in_transaction()`: první nespotřebovaný
-  Incident založí okno (pokud žádné neběží), každý další (včetně toho
-  prvního) prochází `should_extend()` – konzumace je bezpodmínečná
-  (`philosophy.md` 3.8), Extension samotná je podmíněná
-- **`incident.confirmation_changed` payload rozšířen** o `rule_group_id`,
-  `intrinsic_severity`, `cooperation_*` – stejná lekce z Fáze 2.4
-  (žádný zpětný dotaz na Trust Manager zevnitř transakce konzumenta)
-- **Reálný nález**: s výchozí (nízkou) cooperation je i izolovaný MINOR
-  incident způsobilý pro Extension – to není bug testu, je to přesně to,
-  co `philosophy.md` 2.1/3.8 předpovídá (spolupráce se musí prokázat,
-  ne předpokládat)
-- 26 nových testů (20 čistých funkcí podle ET1–ET16 z dokumentu + 6
-  integračních, včetně capacity cap v reálné DB)
-
-**Fáze 2.6 — Recovery Plan.** Hotovo (viz `recovery_plan/README.md`):
-
-- `database/migrations/008_recovery_plan.sql` — `recovery_plans`,
-  `recovery_tasks`, `recovery_task_completions`
-- `recovery_plan/models.py`, `recovery_plan/repository.py` –
-  `RecoveryPlanManager`: celý lifecycle jako čistá reakce na Penalty
-  Window eventy (started→create, frozen/resumed/completed→mirror,
-  target_duration_changed→regenerate s expirací starých PROPOSED/ACCEPTED
-  tasků, COMPLETED tasky a jejich completions nedotčené – RP-4), plus
-  Coach-facing task management (propose/accept/complete/withdraw)
-- **Druhá nezávislá cross-module vazba** (Penalty Engine → Recovery
-  Plan) – stejná disciplína jako Trust Manager → Penalty Engine, ale
-  **beze změny payloadu** – `penalty_window.*` eventy už měly vše
-  potřebné, což je samo o sobě důkaz, že se disciplína ustálila
-- **Reálný nález**: `process_pending_events()` zpracovávala jen jednu
-  dávku eventů existující před začátkem dispatch – pokud handler sám
-  publikoval nový event (Penalty Engine reagující na Trust Manager),
-  ten čekal na *další* volání `on_system_startup()`. Bez běžící
-  publisher smyčky (ta je pořád odložená) by to znamenalo čekat na
-  další restart procesu. Opraveno: `process_pending_events()` teď
-  drénuje celou kaskádu v rámci jednoho volání (`max_cascade_rounds`
-  jako bezpečnostní limit)
-- 21 nových testů Recovery Plan + rozšíření `tests/system/test_startup.py`
-  o end-to-end řetězec Incident → Penalty Window → Recovery Plan,
-  ověřený po **jednom** volání `on_system_startup()`, ne dvou
-
-**Fáze 2.4 — Consumer Framework + Startup Orchestrator.** Hotovo (viz
-`system/README.md` pro klíčové architektonické zjištění):
-
-- `infrastructure/consumer_registry.py` — `ConsumerRegistry` (mapování
-  `event_type` → handler) + `process_pending_events()` (claim → dispatch
-  → mark published, nad existujícími primitivy z `infrastructure/outbox.py`)
-- `infrastructure/startup_lease.py` — restart-safe DB lease (LEASE-1),
-  `system_startup_lease` tabulka (migrace 006)
-- `system/startup.py` — `on_system_startup()` (Trust Manager recovery →
-  Penalty Engine recovery → outbox publisher, přesně podle
-  `system_state_machine.md` Section 7; kroky 3–6 vynechány, protože
-  příslušné moduly ještě neexistují — žádné placeholdery)
-- **Skutečné, reálně fungující propojení** Trust Manager →
-  Penalty Engine přes `incident.confirmation_changed` – `PenaltyWindow`
-  teď vzniká čistě přes event, ne přímým voláním
-- **Reálný architektonický nález při implementaci**: `TrustManager` a
-  `PenaltyEngine` sdílející stejné `core` sdílí i jeho
-  single-transaction guard – handler uvnitř `consume_event()` nemůže
-  volat druhý modul, který by otevřel vlastní transakci
-  (`NestedTransactionError`). Řešení: payload eventu musí nést vše,
-  co konzument potřebuje (přidáno `trust_domain`), a konzument nikdy
-  nevolá veřejné API jiného modulu zevnitř své transakce – nová metoda
-  `_consume_confirmed_incident_in_transaction()` pracuje čistě
-  nad dodanou transakcí (přejmenováno a rozšířeno ve Fázi 2.5, kdy
-  Extension sjednotila start i extend do jedné konzumační cesty)
-- 26 nových testů (5 lease + 8 registry + 8 end-to-end integrace +
-  regresní oprava), včetně testu dokazujícího, že `PenaltyWindow` vzniká
-  čistě přes reálné event wiring, ne přímým voláním
-
-**Fáze 2.2 — Trust Manager, Slice 2 (recalculation pipeline).** Hotovo:
-
-- `database/migrations/004_trust_recalculation.sql` — `trust_recalculations`
-  + `trust_recalculation_evidence` (TI4: `UNIQUE(evidence_id)` — evidence
-  spotřebována nejvýš jednou, navždy)
-- `trust_manager/recalculation.py` — čisté funkce bez DB závislosti:
-  `effective_weight()` (3.3/TI9, capped), `apply_recalculation()`
-  (3.5/TI19 — jedna position nikdy nepohne skóre o víc než
-  `MAX_ABSOLUTE_DELTA_PER_RECALCULATION`, ani pro CRITICAL Incident),
-  `compute_confidence()` (3.6, diminishing returns podle objemu evidence
-  v rolling window)
-- `trust_manager/repository.py` — `TrustDomainState.score`/`confidence`
-  se teď skutečně mění; `confirm_incident()` spouští 'incident' trigger
-  přepočtu ve **stejné transakci** (evidence a její spotřeba vznikají ze
-  stejného volání, žádná mezera pro crash recovery navíc není potřeba)
-- **Dvě konstanty, které dokument nezadává přesným číslem** (`MAX_ABS_EFFECTIVE_WEIGHT`,
-  `CONFIDENCE_K`) – explicitně označeny jako vlastní rozumný default, ne
-  tiše předstírané jako už rozhodnuté architekturou (viz `trust_manager/README.md`)
-- 21 nových testů (14 čistých funkcí + 7 integračních) – včetně ověření,
-  že opakovaný přepočet nikdy znovu nespotřebuje stejnou evidenci
-
-Trust Manager má teď uzavřený celý životní cyklus důvěry (evidence →
-přepočet → nové skóre), s výjimkou dvou triggerů (`window_completion`,
-`scheduled_review`), které čekají na moduly, jež ještě neexistují. Další
-krok: **Penalty Engine**, který už může stavět na stabilním
-`get_incident_assessment()`/`get_confirmed_incidents_since()` API, aniž
-by řešil, jak se důvěra počítá.
-
-**Fáze 2.3 — Penalty Engine, Slice 1.** Hotovo (viz `penalty_engine/README.md`
-pro přesné vymezení rozsahu vs. co je odloženo):
-
-- `database/migrations/005_penalty_engine.sql` — `penalty_windows`,
-  `freeze_periods`, `incident_consumption` (jen tabulky skutečně nové
-  tomuto modulu — `domain_events`/`trust_domains` už existují z
-  předchozích fází)
-- `penalty_engine/window.py` — čisté funkce: `target_active_hours()`
-  (I5: `min(base+extensions, 336)`), `active_hours_elapsed()` (I6:
-  zamrzlý čas se nikdy nepočítá; downtime se počítá pro ACTIVE okno –
-   obojí "zadarmo" jen z porovnání dvou absolutních časových razítek),
-  `is_complete()`
-- `penalty_engine/repository.py` — `PenaltyEngine` třída. `freeze()`/
-  `resume()` implementují "freeze jako množina souběžných důvodů"
-  (2.3/I22) – druhý souběžný freeze nemění stav ani čas, resume
-  reaktivuje jen když poslední důvod zmizí. `emergency_freeze()` jako
-  samostatná minimální funkce (2.4/I16 – žádná závislost na
-  coach_engine/keyholder_engine, ověřeno strukturálně). `ensure_current_state()`
-  řeší 4.4+4.5 najednou (expirace freeze + natural completion, obojí
-  proti stejnému `now`)
-- Veřejné read API (2.5, 2.6): `get_authorization_freeze_state()`,
-  `get_penalty_window_relevant_domains()`
-- **Odloženo** (žádný placeholder): `extend()`/`should_extend()`
-  (patří Extension modulu), Recovery Credit integrace (patří Recovery
-  Plan modulu), `terminate()` (odloženo už samotným architektonickým
-  dokumentem, ne jen touhle fází), skuteční volající pro
-  `partnered_intimacy_authorization`/`temporary_wear_exemption` důvody
-  (mechanismus existuje a je otestovaný, ale Activity Authorization a
-  Coach engine, které by ho volaly, ještě neexistují)
-- 50 nových testů (13 čistých funkcí + 37 integračních, včetně reálné
-  vazby na Trust Manager, ne mock)
-
-**Fáze 1.4 — Transactional Outbox.** Hotovo:
-
-- `database/migrations/002_domain_events.sql` — `domain_events` +
-  `domain_event_consumers` schéma (schéma odděleno od chování, stejný
-  vzor jako `infrastructure/database.py`)
-- `infrastructure/outbox.py` — `DomainEvent`, `write_event()` (zápis
-  uvnitř existující transakce), `claim_pending_events()`/`mark_published()`
-  (claim/publish s ochranou proti souběžnému claimu dvou publisherů),
-  `has_been_processed()`/`mark_processed()` (consumer dedup),
-  `consume_event()` (postaveno přímo na `apply_transition()`, ne
-  paralelní implementace)
-- `database/database.py` — `record_rule_change_with_consent()` teď
-  reálně používá `events=` slot (`consent_log.rule_change_recorded`) —
-  poctivě označeno jako Fáze 0 demonstrace, ne katalogový event
-- **Finding 6 uzavřen** (`domain_events_catalog.md`) — všechny eventy
-  jdou přes sdílený outbox bez výjimky, jednoduchost před minimalismem
-- 19 nových testů (`tests/infrastructure/test_outbox.py`) + regresní
-  aktualizace (`migrate()` teď aplikuje 2 migrace)
-
-**Fáze 2.1 — Trust Manager, Slice 1.** Hotovo (viz `trust_manager/README.md`
-pro přesné vymezení rozsahu vs. co je odloženo):
-
-- `database/migrations/003_trust_manager.sql` — Domain Registry, Domain
-  State, Incident/Confirmation/Severity model, TrustEvidence
-- `trust_manager/models.py` — všechny dataclassy a enumy ze sekcí
-  2.1, 2.2, 2.4, 2.8, 2.10
-- `trust_manager/severity.py` — deterministický `assess_severity()`
-  rubric (TI5: signatura nesmí přijmout trust_score/TrustDomainState/
-  CooperationAssessment), `cooperation_trust_offset()`, všechny váhy
-  jako pojmenované `critical_change` konstanty
-- `trust_manager/repository.py` — `TrustManager` třída, kompozičně nad
-  `infrastructure.database.Database`, stejný vzor jako
-  `database/database.py`. `confirm_incident()` implementuje atomickou
-  opravu TI23/14.2 (ConfirmationRecord + Incident update + assess_severity +
-  TrustEvidence, vše v jedné transakci). Veřejné read API (13):
-  `get_incident_assessment()`, `get_confirmed_incidents_since()`.
-  Crash recovery (14.3): `recover_trust_manager_state()`, idempotentní
-- **Odloženo do další dávky** (žádný placeholder kód, prostě zatím
-  neexistuje): TrustEvidenceDispute, score recalculation pipeline
-  (`TrustDomainState.score` se zatím NEMĚNÍ na základě evidence),
-  OverallTrustReport, Goal Accountability Assessment integrace,
-  `should_extend()`/ExtensionContext
-- 29 nových testů (`tests/trust_manager/test_repository.py`)
-
-**Fáze 1.3 — Domain Events Catalog a náprava dokumentace.** Hotovo:
-
-- `philosophy.md` nahrazeno finální verzí (v1.12.1); `docs/architecture/`
-  založeno se všemi devíti zbylými architektonickými dokumenty
-- `docs/architecture/domain_events_catalog.md` — konsolidovaný katalog
-  všech eventů napříč sedmi moduly (publish/listen mapa), sestavený
-  přímo z existujících "Domain Events" sekcí, ne nově navržený
-- **5 reálných nesrovnalostí mezi dokumenty nalezeno a zdokumentováno**
-  (ne opraveno — čeká na rozhodnutí): chybějící `incident.confirmed`
-  event, sporný zdroj `activity_authorization.freeze_confirmed`,
-  zastaralý název modulu u `recovery_plan.*` eventů, `recovery_engine.*`
-  prefix bez existujícího modulu toho jména, `emergency_override.triggered`
-  bez jediného vlastníka
-- Policy Engine myšlenka (z dnešní Verification diskuze) zaregistrována
-  jako poznámka pro budoucnost, záměrně nenavrhována teď
-
-Podle plánu je dalším krokem buď vyřešení nálezů z katalogu, nebo
-rovnou Fáze 1.4 (transactional outbox), až budou eventy ustálené.
+- **Phase 0** -- foundational schema, config, backups, a Discord bot
+  skeleton with no AI logic yet.
+- **Phase 1.1** -- `infrastructure/clock.py` (`Clock`/`SystemClock`/`FrozenClock`)
+  and the repository-wide guard against direct `datetime.now()` calls.
+- **Phase 1.2** -- the shared `Database`/`Transaction`/`apply_transition()`
+  transactional core, with `database/database.py` rebuilt on top of it.
+- **Phase 1.3** -- the architecture baseline (`philosophy.md` v1.12.1
+  and the nine architecture documents) moved physically into the
+  repository under `docs/architecture/`, plus a consolidated
+  `domain_events_catalog.md` with five real cross-document
+  inconsistencies found and documented (not yet resolved at the time).
+- **Phase 1.4** -- the transactional outbox
+  (`infrastructure/outbox.py`, `domain_events` schema): write, claim,
+  publish, and consumer-side dedup, all built on `apply_transition()`.
+- **Phase 2.1-2.2** -- Trust Manager: Incident registration and
+  confirmation, deterministic severity assessment, and the trust score
+  recalculation pipeline (evidence -> score, with a bounded
+  per-recalculation delta and diminishing-returns confidence).
+- **Phase 2.3** -- Penalty Engine: the PenaltyWindow state machine
+  (start/freeze/resume/complete), freeze modeled as a set of
+  concurrently active reasons rather than a single flag.
+- **Phase 2.4** -- the Consumer Framework and Startup Orchestrator
+  (`infrastructure/consumer_registry.py`, `system/startup.py`), and the
+  first real, working cross-module event subscription (Trust Manager ->
+  Penalty Engine). This is where a genuine architectural constraint
+  (`NestedTransactionError`, arising when two modules share one
+  database core's single-open-transaction guard) was discovered and
+  resolved by making event payloads carry everything a consumer needs,
+  rather than letting a handler call back into another module's public
+  API mid-transaction. See `system/README.md` for the full account --
+  this became a standing rule applied to every event added since.
+- **Phase 2.5** -- Extension (`should_extend()`), unifying
+  window-starting and window-extending into one consumption path, with
+  every TBD parameter from the architecture document flagged explicitly
+  as this implementation's own default rather than an architectural
+  decision.
+- **Phase 2.6** -- Recovery Plan, reacting purely to Penalty Engine's
+  own events. Wiring it as a second downstream consumer surfaced a
+  second real finding: `process_pending_events()` originally processed
+  only one batch per call, so an event cascade (one handler's side
+  effect triggering another) wouldn't fully propagate within a single
+  `on_system_startup()` call. Fixed by draining the cascade in a loop,
+  bounded by `max_cascade_rounds` as a safety limit.
+- **Phase 2.7** -- Recovery Credit integration: Penalty Engine consumes
+  `recovery_plan.task_completed` and decides, independently, how many
+  hours a completed task actually earns against the window's capacity.
+  This closes the full Incident -> Assessment -> Penalty -> Recovery ->
+  Credit -> Penalty Adjustment lifecycle described in
+  `penalty_window_technical_design.md` Section 3.4.

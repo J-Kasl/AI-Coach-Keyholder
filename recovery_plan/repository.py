@@ -13,7 +13,7 @@ See recovery_plan/README.md for exactly what this slice covers.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 from infrastructure.database import Database as CoreDatabase
@@ -28,12 +28,13 @@ from recovery_plan.models import (
 )
 
 
-def _iso(dt: datetime) -> str:
-    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
-
-
-def _parse_iso(s: str) -> datetime:
-    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+# _iso/_parse_iso: thin local aliases for the shared implementation
+# (infrastructure/time_format.py) -- kept as private names here so
+# every existing call site in this module is unchanged; consolidated
+# during the final architecture review pass (Phase 2.7) to remove five
+# identical copies of this pair across the codebase.
+from infrastructure.time_format import iso as _iso
+from infrastructure.time_format import parse_iso as _parse_iso
 
 
 class RecoveryPlanNotFoundError(LookupError):
@@ -288,12 +289,20 @@ class RecoveryPlanManager:
         """
         RP-2: Recovery Plan's own interpretation that a task was
         genuinely completed. Publishes `recovery_plan.task_completed` --
-        **this is the event the Penalty Engine will consume** (Section
-        6, deferred to the Recovery Credit integration slice) to decide
-        how many hours to credit. This module never writes to
-        `recovery_credit_ledger` itself (RP-1, RP-8).
+        **this is the event the Penalty Engine consumes** (Section 6,
+        Recovery Credit integration) to decide how many hours to
+        credit. This module never writes to `recovery_credit_ledger`
+        itself (RP-1, RP-8).
+
+        The payload carries `penalty_window_id` and `credit_hours`
+        directly (looked up in the SAME transaction, one extra query
+        against this module's own tables) — not only IDs the consumer
+        would otherwise have to resolve by calling back into this
+        module's public API mid-transaction
+        (implementation_conventions.md Section 3; system/README.md's
+        established discipline, exercised here for a third time).
         """
-        def write(tx: Transaction, _state: object) -> tuple[RecoveryTask, RecoveryTaskCompletion]:
+        def write(tx: Transaction, _state: object) -> tuple[RecoveryTask, RecoveryTaskCompletion, str]:
             row = tx.fetch_one("SELECT * FROM recovery_tasks WHERE id = ?", (task_id,))
             if row is None:
                 raise RecoveryTaskNotFoundError(task_id)
@@ -308,11 +317,12 @@ class RecoveryPlanManager:
                 "INSERT INTO recovery_task_completions (id, recovery_task_id, recovery_plan_id, created_at, notes) VALUES (?, ?, ?, ?, ?)",
                 (completion.id, task_id, row["recovery_plan_id"], _iso(now), notes),
             )
+            plan_row = tx.fetch_one("SELECT penalty_window_id FROM recovery_plans WHERE id = ?", (row["recovery_plan_id"],))
             task = self._row_to_task(row, status=RecoveryTaskStatus.COMPLETED, status_changed_at=now)
-            return task, completion
+            return task, completion, plan_row["penalty_window_id"]
 
-        def events(tx: Transaction, _state: object, result: tuple[RecoveryTask, RecoveryTaskCompletion]) -> None:
-            _task, completion = result
+        def events(tx: Transaction, _state: object, result: tuple[RecoveryTask, RecoveryTaskCompletion, str]) -> None:
+            task, completion, penalty_window_id = result
             write_event(
                 tx,
                 DomainEvent(
@@ -321,12 +331,14 @@ class RecoveryPlanManager:
                         "recovery_task_completion_id": completion.id,
                         "recovery_task_id": completion.recovery_task_id,
                         "recovery_plan_id": completion.recovery_plan_id,
+                        "penalty_window_id": penalty_window_id,
+                        "credit_hours": task.credit_hours,
                     },
                     occurred_at=now,
                 ),
             )
 
-        _task, completion = apply_transition(self._core, write=write, events=events)
+        _task, completion, _penalty_window_id = apply_transition(self._core, write=write, events=events)
         return completion
 
     # -------------------------------------------------------------------
@@ -357,6 +369,18 @@ class RecoveryPlanManager:
     def get_recovery_plan_for_window(self, penalty_window_id: str) -> RecoveryPlan | None:
         with self._core.transaction() as tx:
             row = tx.fetch_one("SELECT * FROM recovery_plans WHERE penalty_window_id = ?", (penalty_window_id,))
+        return self._row_to_plan(row) if row else None
+
+    def get_recovery_plan(self, recovery_plan_id: str) -> RecoveryPlan | None:
+        """
+        A companion read function to get_recovery_plan_for_window() --
+        needed by the Penalty Engine's Recovery Credit integration
+        (penalty_window_technical_design.md 3.4), which has a
+        recovery_plan_id (from a RecoveryTaskCompletion) and needs the
+        corresponding penalty_window_id, not the reverse lookup.
+        """
+        with self._core.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM recovery_plans WHERE id = ?", (recovery_plan_id,))
         return self._row_to_plan(row) if row else None
 
     # -------------------------------------------------------------------

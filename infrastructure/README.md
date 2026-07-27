@@ -60,7 +60,7 @@ A repository-wide guard test
 (`test_no_direct_datetime_now_calls_outside_clock_module`,
 `tests/infrastructure/test_clock.py`) enforces "production code never
 calls `datetime.now()`/`datetime.utcnow()` directly" mechanically, not
-just as a written rule. As of Fáze 1.2, this guard has **zero**
+just as a written rule. As of Phase 1.2, this guard has **zero**
 production exceptions — `KNOWN_PRE_CLOCK_VIOLATIONS` is empty (see
 "What changed in Phase 0" below).
 
@@ -99,14 +99,14 @@ also write an event passes `events=some_callable`; every call site that
 doesn't need one is completely unaffected. No existing signature or
 call site changes when that phase begins.
 
-## Why `infrastructure.outbox` exists (Fáze 1.4)
+## Why `infrastructure.outbox` exists (Phase 1.4)
 
 `DomainEvent`/`write_event`/`claim_pending_events`/`mark_published`/
 `has_been_processed`/`mark_processed`/`consume_event`
 (`infrastructure/outbox.py`) are the shared transactional outbox
 `implementation_conventions.md` Section 5 describes, and the first
 real consumer of the `events=` slot `apply_transition()` has carried
-since Fáze 1.2.
+since Phase 1.2.
 
 **Schema versus behavior, the same split as `infrastructure/database.py`:**
 the `domain_events`/`domain_event_consumers` tables are defined in
@@ -146,7 +146,7 @@ are still architecture, not code). The one real, honestly-labeled
 demonstration is `database/database.py`'s
 `record_rule_change_with_consent()`, which now also emits a
 `consent_log.rule_change_recorded` event via the `events=` slot — this
-is Fáze 0 demo wiring, not a catalog event, and is documented as such
+is Phase 0 demo wiring, not a catalog event, and is documented as such
 at its call site. The outbox itself is fully implemented and tested
 (`tests/infrastructure/test_outbox.py`) independent of that one
 example, ready for the first real domain module's events when it
@@ -196,7 +196,7 @@ concurrency is a separate, already-handled concern: `BEGIN IMMEDIATE`
 correctly serializes concurrent writers across OS processes at the
 SQLite engine level regardless of this class's thread-safety scope.
 
-## What changed in Phase 0 (Fáze 1.2)
+## What changed in Phase 0 (Phase 1.2)
 
 Per architectural review, `field(default_factory=utc_now)` was not
 merely "calling a global function" — the deeper problem was that a
@@ -232,11 +232,11 @@ pattern stays visible for any future, deliberately-documented exception.
 ## What this phase deliberately does NOT deliver
 
 - ~~**The transactional outbox (`domain_events`)**~~ — **delivered in
-  Fáze 1.4** (`infrastructure/outbox.py`).
+  Phase 1.4** (`infrastructure/outbox.py`).
 - ~~**A standalone consumer framework/registry**~~ — **delivered in
-  Fáze 2.4** (`infrastructure/consumer_registry.py`:
+  Phase 2.4** (`infrastructure/consumer_registry.py`:
   `ConsumerRegistry`/`process_pending_events()`).
-- ~~**The startup orchestrator**~~ — **delivered in Fáze 2.4**
+- ~~**The startup orchestrator**~~ — **delivered in Phase 2.4**
   (`system/startup.py`'s `on_system_startup()`; the restart-safe lease
   itself is `infrastructure/startup_lease.py`). See `system/README.md`
   for a real architectural finding this integration surfaced

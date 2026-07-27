@@ -150,7 +150,7 @@ one line, the boundary is not yet clear enough to implement.
 
 **A consumer handler must never call another module's narrow read
 function either — not only its raw table.** Discovered during actual
-implementation, not anticipated on paper (Fáze 2.4, wiring the first
+implementation, not anticipated on paper (Phase 2.4, wiring the first
 real cross-module consumer): when two modules share one underlying
 `infrastructure.database.Database` core, that core's single-open-
 transaction guard is shared too. A consumer handler running inside
@@ -172,9 +172,9 @@ the judgment, but the judgment's actual content, so a handler is
 transactionally self-contained and never reaches back into the
 publisher's live API mid-reaction. Concretely, in this system:
 `incident.confirmation_changed`'s payload grew, across two separate
-integrations, to carry `trust_domain` (Fáze 2.4, Penalty Engine's
+integrations, to carry `trust_domain` (Phase 2.4, Penalty Engine's
 window-starting), then `rule_group_id`, `intrinsic_severity`, and
-`cooperation_*` (Fáze 2.5, Extension's `should_extend()`) — each
+`cooperation_*` (Phase 2.5, Extension's `should_extend()`) — each
 addition driven by an actual consumer's actual need discovered while
 wiring it, not anticipated in advance. This is the correct order to
 discover a payload's full shape in: add a field when a real consumer

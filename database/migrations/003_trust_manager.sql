@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 003 — Trust Manager, Slice 1 (Fáze 2.1)
+-- Migration 003 — Trust Manager, Slice 1 (Phase 2.1)
 -- =============================================================================
 -- Domain Registry + Domain State + Incident/Confirmation/Severity model,
 -- per docs/architecture/trust_manager_technical_design.md Sections 2.1,
@@ -116,7 +116,7 @@ CREATE INDEX IF NOT EXISTS idx_trust_evidence_domain ON trust_evidence(domain_id
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Trust Manager Slice 1: domain registry/state, Incident/Confirmation/severity model, TrustEvidence (Faze 2.1)');

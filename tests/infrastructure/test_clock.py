@@ -151,12 +151,12 @@ class TestFrozenClockSet:
 # Repository-wide convention guard
 # =============================================================================
 
-# Fáze 1.2: database/models.py a database/backup.py byly migrovány na
-# injektovaný Clock (created_at je teď povinný konstruktorový parametr;
-# backup.py bere `now: datetime` jako explicitní parametr). Tenhle set je
-# proto prázdný — ponechán jako pojmenované místo pro jakoukoli budoucí,
-# vědomě zdokumentovanou výjimku, ne smazán úplně, aby vzor zůstal na
-# očích, až (a pokud) bude znovu potřeba.
+# Phase 1.2: database/models.py and database/backup.py were migrated
+# to an injected Clock (created_at is now a required constructor
+# parameter; backup.py takes `now: datetime` as an explicit parameter).
+# This set is therefore empty -- kept as a named place for any future,
+# deliberately documented exception, rather than deleted outright, so
+# the pattern stays visible if (and when) it's needed again.
 KNOWN_PRE_CLOCK_VIOLATIONS: set[Path] = set()
 
 # Directories that are never expected to contain application code.

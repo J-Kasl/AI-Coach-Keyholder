@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 008 — Recovery Plan (Fáze 2.6)
+-- Migration 008 — Recovery Plan (Phase 2.6)
 -- =============================================================================
 -- docs/architecture/recovery_plan_technical_design.md.
 -- See recovery_plan/README.md for exactly what this slice covers.
@@ -49,7 +49,7 @@ CREATE INDEX IF NOT EXISTS idx_recovery_task_completions_task ON recovery_task_c
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (8, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Recovery Plan: recovery_plans, recovery_tasks, recovery_task_completions (Faze 2.6)');

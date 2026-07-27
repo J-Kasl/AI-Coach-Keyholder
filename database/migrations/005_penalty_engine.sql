@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 005 — Penalty Engine, Slice 1 (Fáze 2.3)
+-- Migration 005 — Penalty Engine, Slice 1 (Phase 2.3)
 -- =============================================================================
 -- docs/architecture/penalty_window_technical_design.md Sections 2.1-2.6,
 -- 3.1-3.3 (minus 3.4, Recovery Credit integration — deferred, see
@@ -84,7 +84,7 @@ CREATE INDEX IF NOT EXISTS idx_incident_consumption_window ON incident_consumpti
 
 
 -- =============================================================================
--- Seed: zápis této migrace do schema_version
+-- Seed: record this migration in schema_version
 -- =============================================================================
 INSERT INTO schema_version (version, applied_at, description)
 VALUES (5, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'Penalty Engine Slice 1: state machine, freeze-as-set-of-reasons, incident_consumption (Faze 2.3)');
