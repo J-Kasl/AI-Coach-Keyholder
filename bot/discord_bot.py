@@ -26,15 +26,17 @@ import discord
 from core.config import Config, ConfigError
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
+from infrastructure.clock import Clock, SystemClock
 
 logger = logging.getLogger("ai_coach_keyholder.bot")
 
 
 class CoachKeyholderBot(discord.Client):
-    def __init__(self, config: Config, db: Database, *, intents: discord.Intents):
+    def __init__(self, config: Config, db: Database, clock: Clock, *, intents: discord.Intents):
         super().__init__(intents=intents)
         self.config = config
         self.db = db
+        self.clock = clock
 
     async def on_ready(self) -> None:
         logger.info("Přihlášen jako %s (id=%s)", self.user, self.user.id if self.user else "?")
@@ -48,6 +50,7 @@ class CoachKeyholderBot(discord.Client):
         # Krátkodobá paměť: každou zprávu uživatele zalogujeme
         self.db.save_conversation_message(
             ConversationMessage(
+                created_at=self.clock.now(),
                 role=MessageRole.USER,
                 content=message.content,
                 discord_channel_id=str(message.channel.id),
@@ -70,6 +73,7 @@ class CoachKeyholderBot(discord.Client):
 
         self.db.save_conversation_message(
             ConversationMessage(
+                created_at=self.clock.now(),
                 role=MessageRole.ASSISTANT,
                 content=reply_text,
                 discord_channel_id=str(message.channel.id),
@@ -78,10 +82,10 @@ class CoachKeyholderBot(discord.Client):
         )
 
 
-def build_bot(config: Config, db: Database) -> CoachKeyholderBot:
+def build_bot(config: Config, db: Database, clock: Clock) -> CoachKeyholderBot:
     intents = discord.Intents.default()
     intents.message_content = True  # nutné pro čtení obsahu zpráv (privileged intent)
-    return CoachKeyholderBot(config, db, intents=intents)
+    return CoachKeyholderBot(config, db, clock, intents=intents)
 
 
 def main() -> None:
@@ -98,19 +102,20 @@ def main() -> None:
 
     logging.getLogger("ai_coach_keyholder").setLevel(config.log_level)
 
+    clock = SystemClock()
     db = Database(config.db_path, backup_retention=config.backup_retention_count)
 
     # Migrace (samy si zajistí zálohu před aplikací, pokud DB už existuje)
-    applied = db.migrate()
+    applied = db.migrate(now=clock.now())
     if applied:
         logger.info("Aplikovány migrace: %s", applied)
 
     # Max 1 automatická záloha za den, i mimo migrace
-    daily_backup = db.ensure_daily_backup()
+    daily_backup = db.ensure_daily_backup(now=clock.now())
     if daily_backup:
         logger.info("Vytvořena denní záloha: %s", daily_backup)
 
-    bot = build_bot(config, db)
+    bot = build_bot(config, db, clock)
     bot.run(config.discord_token, log_handler=None)
 
 

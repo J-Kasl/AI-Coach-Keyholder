@@ -11,6 +11,16 @@ Cíleno na Python 3.13 — používá `from __future__ import annotations`,
 
 Princip: tyto třídy neobsahují žádnou byznys logiku ani validaci nad rámec
 tvaru dat. Byznys logika patří do core/*_engine.py.
+
+Fáze 1.2: `created_at` je nyní povinný konstruktorový parametr (žádný
+`default_factory=utc_now`, `utc_now()` odstraněno) — model sám nikdy
+negeneruje svůj vlastní timestamp; aplikační vrstva ho dodává explicitně
+z injektovaného `infrastructure.clock.Clock`. Všechny dataclassy s
+`created_at` jsou proto `@dataclass(kw_only=True)`, protože Python
+vyžaduje, aby povinná pole nenásledovala po polích s defaultem (`id` má
+`default_factory=new_id`) — `kw_only=True` to obchází tak, že se
+konstruuje výhradně přes klíčová slova, což ostatně odpovídá tomu, jak
+se tyto třídy v kódu už dnes volají.
 """
 
 from __future__ import annotations
@@ -29,11 +39,6 @@ from enum import StrEnum
 def new_id() -> str:
     """Generuje nové UUID4 jako string — jednotný formát ID napříč celým systémem."""
     return str(uuid.uuid4())
-
-
-def utc_now() -> datetime:
-    """Aktuální čas v UTC. Používat vždy tohle, ne datetime.now() bez tz."""
-    return datetime.now(timezone.utc)
 
 
 def iso(dt: datetime) -> str:
@@ -160,10 +165,10 @@ class RelevantPattern:
         )
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ContextSnapshot:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     engine_version: str = "context_engine@0.1.0"
 
     context_factors: list[ContextFactor] = field(default_factory=list)
@@ -176,10 +181,10 @@ class ContextSnapshot:
 # Coach Engine
 # =============================================================================
 
-@dataclass
+@dataclass(kw_only=True)
 class CoachAssessment:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     engine_version: str = "coach_engine@0.1.0"
     context_snapshot_id: str = ""
 
@@ -213,10 +218,10 @@ class RewardState:
     positive_streak_note: str | None = None
 
 
-@dataclass
+@dataclass(kw_only=True)
 class KeyholderAssessment:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     engine_version: str = "keyholder_engine@0.1.0"
     context_snapshot_id: str = ""
 
@@ -241,10 +246,10 @@ class ImpactScore:
     contributing_factors: dict[str, float] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class DecisionResult:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     engine_version: str = "decision_engine@0.1.0"
 
     context_snapshot_id: str = ""
@@ -279,10 +284,10 @@ class DecisionResult:
 # Observations (write-only z pohledu runtime)
 # =============================================================================
 
-@dataclass
+@dataclass(kw_only=True)
 class ObservationRecord:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
 
     observation_type: ObservationType = ObservationType.DECISION_MADE
     related_decision_id: str | None = None
@@ -300,7 +305,7 @@ class ObservationRecord:
 # Rules & Consent
 # =============================================================================
 
-@dataclass
+@dataclass(kw_only=True)
 class Rule:
     id: str = field(default_factory=new_id)
     rule_group_id: str = field(default_factory=new_id)   # nové pravidlo = nové group_id; nová verze = stejné group_id
@@ -313,15 +318,15 @@ class Rule:
     is_active: bool = True
     supersedes_id: str | None = None
 
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     created_by: CreatedBy = CreatedBy.USER
     is_critical: bool = False
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ConsentRecord:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
 
     target_type: ConsentTargetType = ConsentTargetType.RULE
     target_id: str | None = None
@@ -338,10 +343,10 @@ class ConsentRecord:
 # Conversation (krátkodobá paměť / surový log)
 # =============================================================================
 
-@dataclass
+@dataclass(kw_only=True)
 class ConversationMessage:
     id: str = field(default_factory=new_id)
-    created_at: datetime = field(default_factory=utc_now)
+    created_at: datetime
     role: MessageRole = MessageRole.USER
     content: str = ""
     discord_channel_id: str | None = None

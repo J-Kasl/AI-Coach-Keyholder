@@ -1,0 +1,4 @@
+# Development/test-only dependencies — never installed in production.
+-r requirements.txt
+
+pytest>=8.0

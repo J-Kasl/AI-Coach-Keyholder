@@ -2,16 +2,25 @@
 database/database.py
 
 Přístupová vrstva nad SQLite. Zodpovídá za:
-  - správu připojení,
   - aplikaci migrací (sekvenční .sql soubory v database/migrations/),
   - převod mezi dataclass modely (database/models.py) a DB řádky,
     včetně (de)serializace *_json sloupců.
 
+Fáze 1.2: samotné otevírání connections a transakční hranice (BEGIN/
+COMMIT/ROLLBACK) už tahle třída nedělá sama — deleguje na
+infrastructure.database.Database (viz infrastructure/README.md).
+Tahle třída je repository nad sdílenou transakční vrstvou, ne
+paralelní implementace connection managementu. Žádná metoda zde
+nevolá commit()/rollback() přímo — to zůstává výhradně v
+infrastructure.database.Database.transaction().
+
 Použití:
     from database.database import Database
+    from infrastructure.clock import SystemClock
 
+    clock = SystemClock()
     db = Database("data/coach_keyholder.db")
-    db.migrate()
+    db.migrate(now=clock.now())
 
     snapshot_id = db.save_context_snapshot(snapshot)
     snapshot = db.get_context_snapshot(snapshot_id)
@@ -25,9 +34,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 from database import backup as backup_module
 from database.models import (
@@ -56,6 +64,9 @@ from database.models import (
     iso,
     parse_iso,
 )
+from infrastructure.database import Database as CoreDatabase
+from infrastructure.database import Transaction, apply_transition
+from infrastructure.outbox import DomainEvent, write_event
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 DEFAULT_BACKUP_RETENTION = 14
@@ -67,34 +78,27 @@ class Database:
         db_path: str | Path,
         backup_dir: str | Path | None = None,
         backup_retention: int = DEFAULT_BACKUP_RETENTION,
+        *,
+        core: CoreDatabase | None = None,
     ):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # `core` injectable for tests that want several Database (repository)
+        # facades sharing one infrastructure.database.Database/connection
+        # policy — normal production use just lets this construct its own.
+        self._core = core if core is not None else CoreDatabase(self.db_path)
 
         # Zálohy defaultně vedle databáze, ve stejné (gitignored) data/ složce,
         # takže updaty zdrojového kódu se jich nedotknou (viz .gitignore).
         self.backup_dir = Path(backup_dir) if backup_dir else self.db_path.parent / "backups"
         self.backup_retention = backup_retention
 
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
     # -------------------------------------------------------------------
     # Migrations
     # -------------------------------------------------------------------
 
-    def migrate(self) -> list[int]:
+    def migrate(self, now: datetime) -> list[int]:
         """
         Aplikuje všechny dosud neaplikované migrace z database/migrations/
         v pořadí podle čísla v názvu souboru (001_, 002_, ...).
@@ -110,10 +114,16 @@ class Database:
         aplikaci, vytvoří se nejdřív záloha (reason='pre_migration'),
         bez ohledu na to, jestli dnes už proběhla denní záloha — migrace
         je rizikový okamžik a zaslouží si vlastní zálohu navíc.
+
+        `now` (timezone-aware UTC, z injektovaného Clocku) se použije jen
+        pro případnou pre_migration zálohu — použití `raw_connection()`,
+        ne `transaction()`, je záměrné: `executescript()` má vlastní
+        (implicitní) commit chování neslučitelné s naším BEGIN IMMEDIATE
+        (viz infrastructure/database.py, `raw_connection()` docstring).
         """
         migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
 
-        with self._connect() as conn:
+        with self._core.raw_connection() as conn:
             current_version = 0
             try:
                 row = conn.execute(
@@ -138,10 +148,10 @@ class Database:
         # prázdnou databázi bez dat nemá smysl, proto se rozlišuje podle
         # current_version, ne podle pouhé existence souboru.
         if current_version > 0:
-            self.create_backup(reason="pre_migration")
+            self.create_backup(reason="pre_migration", now=now)
 
         applied: list[int] = []
-        with self._connect() as conn:
+        with self._core.raw_connection() as conn:
             for path in pending:
                 version = int(path.name.split("_")[0])
                 sql = path.read_text(encoding="utf-8")
@@ -154,19 +164,19 @@ class Database:
     # Backups
     # -------------------------------------------------------------------
 
-    def create_backup(self, reason: str) -> Path | None:
+    def create_backup(self, reason: str, now: datetime) -> Path | None:
         """Vytvoří zálohu a rovnou aplikuje rotační politiku."""
-        path = backup_module.create_backup(self.db_path, self.backup_dir, reason)
+        path = backup_module.create_backup(self.db_path, self.backup_dir, reason, now=now)
         backup_module.rotate_backups(self.backup_dir, keep=self.backup_retention)
         return path
 
-    def ensure_daily_backup(self) -> Path | None:
+    def ensure_daily_backup(self, now: datetime) -> Path | None:
         """
         Zaručí max. 1 automatickou zálohu za den. Volat při startu aplikace
         (nezávisle na tom, jestli proběhly migrace — pokrývá i běžný denní
         provoz bez schematických změn).
         """
-        path = backup_module.ensure_daily_backup(self.db_path, self.backup_dir)
+        path = backup_module.ensure_daily_backup(self.db_path, self.backup_dir, now=now)
         if path is not None:
             backup_module.rotate_backups(self.backup_dir, keep=self.backup_retention)
         return path
@@ -176,8 +186,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_context_snapshot(self, snap: ContextSnapshot) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO context_snapshots
                     (id, created_at, engine_version, overall_confidence,
@@ -197,8 +207,8 @@ class Database:
         return snap.id
 
     def get_context_snapshot(self, snapshot_id: str) -> ContextSnapshot | None:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self._core.transaction() as tx:
+            row = tx.execute(
                 "SELECT * FROM context_snapshots WHERE id = ?", (snapshot_id,)
             ).fetchone()
         if row is None:
@@ -222,8 +232,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_coach_assessment(self, a: CoachAssessment) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO coach_assessments
                     (id, created_at, engine_version, context_snapshot_id,
@@ -247,8 +257,8 @@ class Database:
         return a.id
 
     def get_coach_assessment(self, assessment_id: str) -> CoachAssessment | None:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self._core.transaction() as tx:
+            row = tx.execute(
                 "SELECT * FROM coach_assessments WHERE id = ?", (assessment_id,)
             ).fetchone()
         if row is None:
@@ -271,8 +281,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_keyholder_assessment(self, a: KeyholderAssessment) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO keyholder_assessments
                     (id, created_at, engine_version, context_snapshot_id,
@@ -297,8 +307,8 @@ class Database:
         return a.id
 
     def get_keyholder_assessment(self, assessment_id: str) -> KeyholderAssessment | None:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self._core.transaction() as tx:
+            row = tx.execute(
                 "SELECT * FROM keyholder_assessments WHERE id = ?", (assessment_id,)
             ).fetchone()
         if row is None:
@@ -318,18 +328,18 @@ class Database:
         )
 
     def record_trust_history(
-        self, trust_score: float, reason: str, keyholder_assessment_id: str | None = None
+        self, trust_score: float, reason: str, now: datetime, keyholder_assessment_id: str | None = None
     ) -> str:
-        from database.models import new_id, utc_now
+        from database.models import new_id
 
         record_id = new_id()
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO trust_history (id, recorded_at, trust_score, reason, keyholder_assessment_id)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (record_id, iso(utc_now()), trust_score, reason, keyholder_assessment_id),
+                (record_id, iso(now), trust_score, reason, keyholder_assessment_id),
             )
         return record_id
 
@@ -338,8 +348,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_decision_result(self, d: DecisionResult) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO decision_results
                     (id, created_at, engine_version, context_snapshot_id,
@@ -371,8 +381,8 @@ class Database:
         return d.id
 
     def get_decision_result(self, decision_id: str) -> DecisionResult | None:
-        with self._connect() as conn:
-            row = conn.execute(
+        with self._core.transaction() as tx:
+            row = tx.execute(
                 "SELECT * FROM decision_results WHERE id = ?", (decision_id,)
             ).fetchone()
         if row is None:
@@ -399,16 +409,16 @@ class Database:
         )
 
     def set_decision_approval_status(self, decision_id: str, status: ApprovalStatus) -> None:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 "UPDATE decision_results SET approval_status = ? WHERE id = ?",
                 (status.value, decision_id),
             )
 
     def get_pending_approvals(self) -> list[DecisionResult]:
         """Rozhodnutí čekající na schválení uživatele — pro Discord approval_flow."""
-        with self._connect() as conn:
-            rows = conn.execute(
+        with self._core.transaction() as tx:
+            rows = tx.execute(
                 "SELECT id FROM decision_results WHERE approval_status = ?",
                 (ApprovalStatus.PENDING.value,),
             ).fetchall()
@@ -419,8 +429,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_observation(self, o: ObservationRecord) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO observations
                     (id, created_at, observation_type, related_decision_id,
@@ -441,8 +451,8 @@ class Database:
 
     def get_unreviewed_observations(self) -> list[ObservationRecord]:
         """Používá výhradně audit export nástroj (observations/export.py), ne runtime."""
-        with self._connect() as conn:
-            rows = conn.execute(
+        with self._core.transaction() as tx:
+            rows = tx.execute(
                 "SELECT * FROM observations WHERE reviewed_at IS NULL ORDER BY created_at"
             ).fetchall()
         result = []
@@ -462,91 +472,151 @@ class Database:
             )
         return result
 
-    def mark_observation_reviewed(self, observation_id: str, notes: str | None = None) -> None:
+    def mark_observation_reviewed(self, observation_id: str, now: datetime, notes: str | None = None) -> None:
         """Volá výhradně audit export / review nástroj."""
-        from database.models import utc_now
-
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 "UPDATE observations SET reviewed_at = ?, review_notes = ? WHERE id = ?",
-                (iso(utc_now()), notes, observation_id),
+                (iso(now), notes, observation_id),
             )
 
     # -------------------------------------------------------------------
     # Rules
     # -------------------------------------------------------------------
 
+    @staticmethod
+    def _insert_rule_row(tx: Transaction, rule: Rule) -> None:
+        """Sdílená INSERT logika pro rules — použita jak přímo (save_rule),
+        tak jako součást větší atomické operace (supersede_rule,
+        record_rule_change_with_consent)."""
+        tx.execute(
+            """
+            INSERT INTO rules
+                (id, rule_group_id, version, title, description, category,
+                 parameters_json, is_active, supersedes_id, created_at,
+                 created_by, is_critical)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                rule.id,
+                rule.rule_group_id,
+                rule.version,
+                rule.title,
+                rule.description,
+                rule.category,
+                json.dumps(rule.parameters),
+                int(rule.is_active),
+                rule.supersedes_id,
+                iso(rule.created_at),
+                rule.created_by.value,
+                int(rule.is_critical),
+            ),
+        )
+
+    @staticmethod
+    def _insert_consent_row(tx: Transaction, c: ConsentRecord) -> None:
+        """Sdílená INSERT logika pro consent_log — použita jak přímo
+        (save_consent_record), tak jako součást record_rule_change_with_consent."""
+        tx.execute(
+            """
+            INSERT INTO consent_log
+                (id, created_at, target_type, target_id, target_version,
+                 action, decision_result_id, explanation_shown, user_comment)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                c.id,
+                iso(c.created_at),
+                c.target_type.value,
+                c.target_id,
+                c.target_version,
+                c.action.value,
+                c.decision_result_id,
+                c.explanation_shown,
+                c.user_comment,
+            ),
+        )
+
     def save_rule(self, rule: Rule) -> str:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO rules
-                    (id, rule_group_id, version, title, description, category,
-                     parameters_json, is_active, supersedes_id, created_at,
-                     created_by, is_critical)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    rule.id,
-                    rule.rule_group_id,
-                    rule.version,
-                    rule.title,
-                    rule.description,
-                    rule.category,
-                    json.dumps(rule.parameters),
-                    int(rule.is_active),
-                    rule.supersedes_id,
-                    iso(rule.created_at),
-                    rule.created_by.value,
-                    int(rule.is_critical),
-                ),
-            )
+        apply_transition(self._core, write=lambda tx, _state: self._insert_rule_row(tx, rule))
         return rule.id
 
     def supersede_rule(self, new_rule: Rule) -> str:
         """
         Vytvoří novou verzi pravidla a deaktivuje předchozí verzi ve stejné
         transakci. new_rule.supersedes_id musí být nastaveno na ID předchozí verze.
+
+        Refaktorováno na apply_transition() (infrastructure/database.py) —
+        stejné chování jako dřív (dva SQL příkazy v jedné transakci), teď
+        postavené na sdíleném generickém helperu místo vlastní ad-hoc
+        kompozice.
         """
-        with self._connect() as conn:
+
+        def write(tx: Transaction, _state: object) -> str:
             if new_rule.supersedes_id:
-                conn.execute(
+                tx.execute(
                     "UPDATE rules SET is_active = 0 WHERE id = ?",
                     (new_rule.supersedes_id,),
                 )
-            conn.execute(
-                """
-                INSERT INTO rules
-                    (id, rule_group_id, version, title, description, category,
-                     parameters_json, is_active, supersedes_id, created_at,
-                     created_by, is_critical)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    new_rule.id,
-                    new_rule.rule_group_id,
-                    new_rule.version,
-                    new_rule.title,
-                    new_rule.description,
-                    new_rule.category,
-                    json.dumps(new_rule.parameters),
-                    int(new_rule.is_active),
-                    new_rule.supersedes_id,
-                    iso(new_rule.created_at),
-                    new_rule.created_by.value,
-                    int(new_rule.is_critical),
+            self._insert_rule_row(tx, new_rule)
+            return new_rule.id
+
+        return apply_transition(self._core, write=write)
+
+    def record_rule_change_with_consent(self, new_rule: Rule, consent: ConsentRecord) -> tuple[str, str]:
+        """
+        Atomicky zapíše novou verzi pravidla (případně deaktivuje
+        předchozí, stejně jako supersede_rule) SPOLU s jejím
+        ConsentRecordem — philosophy.md 2.5 (Consent & Control): změna
+        pravidla nikdy není legitimní bez odpovídajícího souhlasu, takže
+        tahle metoda existuje právě proto, aby ty dva zápisy nikdy nemohly
+        vzniknout nezávisle na sobě (ani při chybě uprostřed).
+
+        Skutečná ukázka apply_transition() přes DVĚ různé tabulky
+        (rules + consent_log), ne jen dvakrát stejnou tabulku jako
+        supersede_rule.
+
+        Fáze 1.4: první reálné využití `events=` slotu (mimo testy).
+        Není to katalogový event z `domain_events_catalog.md` — ten
+        katalog popisuje budoucí doménové moduly (Trust Manager,
+        Penalty Engine, ...), které ještě neexistují jako kód. Jde o
+        poctivě pojmenovanou demonstraci na existující Fázi 0 tabulce,
+        ne o předstírání, že `rules`/`consent_log` jsou plnohodnotný
+        doménový modul podle katalogu.
+        """
+
+        def write(tx: Transaction, _state: object) -> tuple[str, str]:
+            if new_rule.supersedes_id:
+                tx.execute(
+                    "UPDATE rules SET is_active = 0 WHERE id = ?",
+                    (new_rule.supersedes_id,),
+                )
+            self._insert_rule_row(tx, new_rule)
+            self._insert_consent_row(tx, consent)
+            return (new_rule.id, consent.id)
+
+        def events(tx: Transaction, _state: object, result: tuple[str, str]) -> None:
+            rule_id, consent_id = result
+            write_event(
+                tx,
+                DomainEvent(
+                    event_type="consent_log.rule_change_recorded",
+                    source_module="database",
+                    payload={"rule_id": rule_id, "consent_id": consent_id},
+                    occurred_at=new_rule.created_at,
                 ),
             )
-        return new_rule.id
+
+        return apply_transition(self._core, write=write, events=events)
 
     def get_active_rules(self) -> list[Rule]:
-        with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM rules WHERE is_active = 1").fetchall()
+        with self._core.transaction() as tx:
+            rows = tx.execute("SELECT * FROM rules WHERE is_active = 1").fetchall()
         return [self._row_to_rule(r) for r in rows]
 
     def get_rule_history(self, rule_group_id: str) -> list[Rule]:
-        with self._connect() as conn:
-            rows = conn.execute(
+        with self._core.transaction() as tx:
+            rows = tx.execute(
                 "SELECT * FROM rules WHERE rule_group_id = ? ORDER BY version",
                 (rule_group_id,),
             ).fetchall()
@@ -574,39 +644,20 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_consent_record(self, c: ConsentRecord) -> str:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO consent_log
-                    (id, created_at, target_type, target_id, target_version,
-                     action, decision_result_id, explanation_shown, user_comment)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    c.id,
-                    iso(c.created_at),
-                    c.target_type.value,
-                    c.target_id,
-                    c.target_version,
-                    c.action.value,
-                    c.decision_result_id,
-                    c.explanation_shown,
-                    c.user_comment,
-                ),
-            )
+        apply_transition(self._core, write=lambda tx, _state: self._insert_consent_row(tx, c))
         return c.id
 
     def get_consent_history(
         self, target_type: ConsentTargetType, target_id: str | None = None
     ) -> list[ConsentRecord]:
-        with self._connect() as conn:
+        with self._core.transaction() as tx:
             if target_id is not None:
-                rows = conn.execute(
+                rows = tx.execute(
                     "SELECT * FROM consent_log WHERE target_type = ? AND target_id = ? ORDER BY created_at",
                     (target_type.value, target_id),
                 ).fetchall()
             else:
-                rows = conn.execute(
+                rows = tx.execute(
                     "SELECT * FROM consent_log WHERE target_type = ? ORDER BY created_at",
                     (target_type.value,),
                 ).fetchall()
@@ -630,8 +681,8 @@ class Database:
     # -------------------------------------------------------------------
 
     def save_conversation_message(self, m: ConversationMessage) -> str:
-        with self._connect() as conn:
-            conn.execute(
+        with self._core.transaction() as tx:
+            tx.execute(
                 """
                 INSERT INTO conversation_messages
                     (id, created_at, role, content, discord_channel_id,
@@ -654,8 +705,8 @@ class Database:
         self, discord_channel_id: str, limit: int = 20
     ) -> list[ConversationMessage]:
         """Krátkodobá paměť: posledních N zpráv v kanálu, chronologicky."""
-        with self._connect() as conn:
-            rows = conn.execute(
+        with self._core.transaction() as tx:
+            rows = tx.execute(
                 """
                 SELECT * FROM conversation_messages
                 WHERE discord_channel_id = ?
