@@ -118,3 +118,32 @@ to -- noted in its own comment in prose instead.
   2.1/3.8 would predict: cooperation must be actively demonstrated to
   earn leniency, not assumed by default.
 
+## Two real bugs found and fixed (Phase 2.7 focused review)
+
+- **`resume(reason)` used to close only the most recently opened open
+  `FreezePeriod` for that reason.** `emergency_override`/
+  `temporary_wear_exemption` have no schema-level uniqueness constraint
+  preventing a second concurrent open (unlike
+  `partnered_intimacy_authorization`'s
+  `idx_freeze_periods_one_open_intimacy_auth`), so a double-submitted
+  `emergency_freeze()` (double-tap, or a retry after a timeout) could
+  leave an orphaned second open row that a single `resume()` call
+  silently failed to close — the window would stay `FROZEN` with no
+  visible reason why. Fixed: `resume()` now closes EVERY open
+  `FreezePeriod` matching the given reason, emitting one
+  `freeze_periods.closed` event per row closed (each now carries its
+  own `freeze_period_id` in its payload). See
+  `tests/penalty_engine/test_repository.py::TestResumeClosesAllMatchingOpenFreezes`.
+- **`_record_recovery_credit_in_transaction()` had no pre-check before
+  its INSERT**, unlike its structural sibling
+  `_consume_confirmed_incident_in_transaction()` — it relied solely on
+  `UNIQUE(completion_id)` (I26), meaning a second DIRECT call (not the
+  event-driven path, already protected by `consume_event()`'s own
+  dedup) crashed with a raw `sqlite3.IntegrityError` instead of behaving
+  gracefully. Fixed: a duplicate call now returns the previously
+  recorded `RecoveryCreditDecision` — a deliberately different choice
+  from the Incident-consumption analog's `None`, since a credit
+  decision is naturally a look-up-able record, not just a
+  did-something-change flag. See
+  `tests/penalty_engine/test_recovery_credit.py::TestI26Dedup`.
+

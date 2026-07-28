@@ -48,6 +48,28 @@ class RecoveryTaskNotFoundError(LookupError):
         self.task_id = task_id
 
 
+class InvalidTaskTransitionError(ValueError):
+    """
+    Raised when a task's CURRENT status does not permit the requested
+    transition -- e.g. completing a task that was already EXPIRED by a
+    plan regeneration, or WITHDRAWN. Found during the focused
+    architectural review after Phase 2.7: none of accept_task()/
+    complete_task()/withdraw_task() checked the task's current status
+    before applying the new one, meaning an EXPIRED or WITHDRAWN task
+    could still be "completed" and produce a real RecoveryTaskCompletion
+    (and, downstream, real Recovery Credit) for a task the system
+    itself already considers dead.
+    """
+    def __init__(self, task_id: str, current_status: str, requested_status: str, allowed_from: tuple[str, ...]) -> None:
+        super().__init__(
+            f"Cannot transition RecoveryTask {task_id!r} from {current_status!r} to "
+            f"{requested_status!r} -- only permitted from {allowed_from}."
+        )
+        self.task_id = task_id
+        self.current_status = current_status
+        self.requested_status = requested_status
+
+
 class RecoveryPlanManager:
     def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None) -> None:
         self.db_path = Path(db_path)
@@ -257,16 +279,26 @@ class RecoveryPlanManager:
         return apply_transition(self._core, write=write, events=events)
 
     def accept_task(self, task_id: str, *, now: datetime) -> None:
-        self._transition_task(task_id, RecoveryTaskStatus.ACCEPTED, "recovery_plan.task_accepted", now)
+        self._transition_task(task_id, RecoveryTaskStatus.ACCEPTED, "recovery_plan.task_accepted", now,
+                               allowed_from=(RecoveryTaskStatus.PROPOSED,))
 
     def withdraw_task(self, task_id: str, *, now: datetime) -> None:
-        self._transition_task(task_id, RecoveryTaskStatus.WITHDRAWN, "recovery_plan.task_withdrawn", now)
+        self._transition_task(task_id, RecoveryTaskStatus.WITHDRAWN, "recovery_plan.task_withdrawn", now,
+                               allowed_from=(RecoveryTaskStatus.PROPOSED, RecoveryTaskStatus.ACCEPTED))
 
-    def _transition_task(self, task_id: str, new_status: RecoveryTaskStatus, event_type: str, now: datetime) -> None:
+    def _transition_task(
+        self, task_id: str, new_status: RecoveryTaskStatus, event_type: str, now: datetime,
+        *, allowed_from: tuple[RecoveryTaskStatus, ...],
+    ) -> None:
         def write(tx: Transaction, _state: object) -> RecoveryTask:
             row = tx.fetch_one("SELECT * FROM recovery_tasks WHERE id = ?", (task_id,))
             if row is None:
                 raise RecoveryTaskNotFoundError(task_id)
+            current_status = RecoveryTaskStatus(row["status"])
+            if current_status not in allowed_from:
+                raise InvalidTaskTransitionError(
+                    task_id, current_status.value, new_status.value, tuple(s.value for s in allowed_from),
+                )
             tx.execute(
                 "UPDATE recovery_tasks SET status = ?, status_changed_at = ? WHERE id = ?",
                 (new_status.value, _iso(now), task_id),
@@ -306,6 +338,13 @@ class RecoveryPlanManager:
             row = tx.fetch_one("SELECT * FROM recovery_tasks WHERE id = ?", (task_id,))
             if row is None:
                 raise RecoveryTaskNotFoundError(task_id)
+            current_status = RecoveryTaskStatus(row["status"])
+            allowed_from = (RecoveryTaskStatus.PROPOSED, RecoveryTaskStatus.ACCEPTED)
+            if current_status not in allowed_from:
+                raise InvalidTaskTransitionError(
+                    task_id, current_status.value, RecoveryTaskStatus.COMPLETED.value,
+                    tuple(s.value for s in allowed_from),
+                )
             tx.execute(
                 "UPDATE recovery_tasks SET status = ?, status_changed_at = ? WHERE id = ?",
                 (RecoveryTaskStatus.COMPLETED.value, _iso(now), task_id),

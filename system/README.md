@@ -137,3 +137,29 @@ and the test that verifies it.
   (running periodically during normal operation, not only at startup)
   is a natural next addition once the Discord bot's own event loop
   exists to host it.
+
+## A coupling concern noted, deliberately not restructured (Phase 2.7 review)
+
+A focused post-Phase-2.7 architectural review found that
+`build_consumer_registry()` calls eight underscore-prefixed
+("private," by Python convention) methods across `penalty_engine` and
+`recovery_plan`. The "narrow public API" discipline
+(`implementation_conventions.md` Section 3) that this project applies
+between domain modules does not actually hold at this composition
+layer — it's bypassed by naming convention, not enforced structurally,
+and every new consumer registration adds to the same list.
+
+This is real, and worth knowing about. It is NOT fixed here, on
+purpose: the tx-scoped `_*_in_transaction` methods exist specifically
+*for* callers like this one (a consumer handler needing to act inside
+an already-open transaction, per the `NestedTransactionError` finding
+above) — there is no obviously better shape for that relationship
+without inventing a new abstraction (a formal "internal API for
+consumer handlers" contract, versioned separately from the public one)
+ahead of having more than three modules to observe the pattern across.
+Per this project's own discipline (`implementation_conventions.md`
+Section 15's "does any cross-module consequence flow through it?"),
+that abstraction is deferred until it's needed a few more times, not
+designed speculatively now. If a future module's signature change here
+breaks silently, that's the concrete cost of this deferral — accepted
+consciously, not overlooked.

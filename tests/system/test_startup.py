@@ -288,6 +288,28 @@ class TestRecoveryCreditEndToEnd:
         assert refreshed.recovery_credits_earned_hours == 3.0
 
 
+class TestGoalManagementRecoveryViaStartup:
+    def test_on_system_startup_expires_a_past_due_goal_proposal(self, core: CoreDatabase) -> None:
+        from goal_management.models import GoalInterventionType, GoalProposalStatus
+        from goal_management.repository import GoalManager
+
+        gm = GoalManager(core.db_path, core=core)
+        goal = gm.create_goal(
+            title="Exercise several times per week", target_description="3 workouts per week",
+            trust_domain="fitness", created_via="user_proposed", now=FIXED_TIME,
+        )
+        proposal = gm.create_change_proposal(
+            goal.goal_group_id, GoalInterventionType.PROPOSE_ABANDONMENT, reason="reason",
+            proposal_expires_at=FIXED_TIME + timedelta(hours=1), now=FIXED_TIME,
+        )
+
+        clock = FrozenClock(FIXED_TIME + timedelta(hours=2))
+        on_system_startup(core, "test-process", clock)
+
+        expired = gm.get_change_proposal(proposal.id)
+        assert expired.status == GoalProposalStatus.EXPIRED
+
+
 class TestStartupLeaseIntegration:
     def test_second_concurrent_startup_raises(self, core: CoreDatabase) -> None:
         acquire_system_startup_lease(core, "already-running", FIXED_TIME, timedelta(minutes=5))

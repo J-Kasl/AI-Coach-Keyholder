@@ -32,6 +32,7 @@ from infrastructure.startup_lease import (
     acquire_system_startup_lease,
     release_system_startup_lease,
 )
+from goal_management.repository import GoalManager
 from penalty_engine.repository import PenaltyEngine
 from recovery_plan.models import RecoveryPlanStatus
 from recovery_plan.repository import RecoveryPlanManager
@@ -178,6 +179,7 @@ def on_system_startup(core: CoreDatabase, process_id: str, clock: Clock) -> None
         trust_manager = TrustManager(core.db_path, core=core)
         penalty_engine = PenaltyEngine(core.db_path, core=core)
         recovery_plan = RecoveryPlanManager(core.db_path, core=core)
+        goal_management = GoalManager(core.db_path, core=core)
 
         # 1. Trust Manager -- must run first; Penalty Engine's own
         #    consumption flow reads Incident.assessment via
@@ -191,9 +193,17 @@ def on_system_startup(core: CoreDatabase, process_id: str, clock: Clock) -> None
         #    depends on this running before it, once those modules exist.
         penalty_engine.recover_penalty_window_state(now)
 
-        # 3-5. Activity Authorization, Hygiene Privilege, Goal
-        #      Management -- not yet implemented. No placeholder calls;
-        #      see this module's docstring.
+        # 3-4. Activity Authorization, Hygiene Privilege -- not yet
+        #      implemented. No placeholder calls; see this module's
+        #      docstring.
+
+        # 5. Goal Management -- independent of every other module here
+        #    (Section 1: reads nothing from the Trust Manager for its
+        #    own decisions), so its position in this sequence relative
+        #    to steps 1-2/6 does not matter; placed here to match
+        #    system_state_machine.md's own step numbering as closely as
+        #    this project's actual module set allows.
+        goal_management.recover_goal_management_state(now)
 
         # 6. Recovery Plan -- a consistency check dependent on (2),
         #    otherwise independent of the not-yet-implemented steps 3-5

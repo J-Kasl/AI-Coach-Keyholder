@@ -1,9 +1,9 @@
-# Fáze 0 — komunikační vrstva, DB, config
+# Phase 0 — communication layer, DB, config
 discord.py>=2.7.1
 
-# Fáze 1+ (Ollama klient zatím používá standardní requests/httpx přes REST API)
+# Phase 1+ (the Ollama client currently just uses plain requests/httpx over its REST API)
 requests>=2.32.0
 
-# Poznámka: SQLite je součástí Python stdlib, žádná závislost není potřeba.
-# Poznámka: .env je parsován vlastním minimálním loaderem v core/config.py,
-#           python-dotenv záměrně nepoužíváme (viz komentář v souboru).
+# Note: SQLite is part of the Python stdlib, no dependency needed.
+# Note: .env is parsed by our own minimal loader in core/config.py --
+#       python-dotenv is deliberately not used (see the comment in that file).

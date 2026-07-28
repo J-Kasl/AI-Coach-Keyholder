@@ -167,15 +167,52 @@ class TestRecordRecoveryCreditDirect:
 
 
 class TestI26Dedup:
-    def test_duplicate_completion_id_raises_integrity_error(self, pe: PenaltyEngine, rp: RecoveryPlanManager) -> None:
-        """I26 primary guarantee: UNIQUE(completion_id) on recovery_credit_decisions."""
-        import sqlite3
+    """
+    Finding #4 from the focused post-Phase-2.7 architectural review:
+    unlike `_consume_confirmed_incident_in_transaction()`, this
+    function used to have no pre-check before the INSERT, relying
+    solely on the `UNIQUE(completion_id)` DB constraint -- meaning a
+    second direct call (not the event-driven path, which was already
+    protected by consume_event()'s own dedup) crashed with a raw
+    sqlite3.IntegrityError instead of behaving gracefully like its
+    sibling. Fixed: a duplicate call now returns the previously
+    recorded decision.
+    """
 
+    def test_duplicate_completion_id_returns_the_existing_decision(self, pe: PenaltyEngine, rp: RecoveryPlanManager) -> None:
         _create_window_and_plan(core=pe._core, rp=rp)
         plan = rp.get_recovery_plan_for_window("win-1")
         task = rp.propose_task(plan.id, "Journal", "desc", credit_hours=4.0, now=FIXED_TIME)
         completion = rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
-        pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=1))
 
-        with pytest.raises(sqlite3.IntegrityError):
-            pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=2))
+        first = pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=1))
+        second = pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=5))
+
+        assert second.id == first.id
+        assert second.credited_hours == first.credited_hours
+
+    def test_duplicate_call_does_not_double_credit_the_window(self, pe: PenaltyEngine, rp: RecoveryPlanManager) -> None:
+        _create_window_and_plan(core=pe._core, rp=rp)
+        plan = rp.get_recovery_plan_for_window("win-1")
+        task = rp.propose_task(plan.id, "Journal", "desc", credit_hours=4.0, now=FIXED_TIME)
+        completion = rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+
+        pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=1))
+        pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=5))
+
+        with pe._core.transaction() as tx:
+            row = tx.fetch_one("SELECT recovery_credits_earned_hours FROM penalty_windows WHERE id = 'win-1'")
+        assert row["recovery_credits_earned_hours"] == 4.0  # not 8.0
+
+    def test_duplicate_call_does_not_write_a_second_ledger_row(self, pe: PenaltyEngine, rp: RecoveryPlanManager) -> None:
+        _create_window_and_plan(core=pe._core, rp=rp)
+        plan = rp.get_recovery_plan_for_window("win-1")
+        task = rp.propose_task(plan.id, "Journal", "desc", credit_hours=4.0, now=FIXED_TIME)
+        completion = rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+
+        pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=1))
+        pe.record_recovery_credit_from_task_completion(rp, completion.id, now=FIXED_TIME + timedelta(hours=5))
+
+        with pe._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT * FROM recovery_credit_ledger WHERE source_completion_id = ?", (completion.id,))
+        assert len(rows) == 1

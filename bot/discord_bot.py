@@ -1,18 +1,27 @@
 """
 bot/discord_bot.py
 
-Basic Discord bot skeleton for AI Coach & Keyholder — Phase 0.
+The Discord adapter — Phase 3.1's minimal vertical slice. Deliberately
+a THIN layer: this file's only responsibilities are
 
-Responsibility in this phase is deliberately limited to verifying the
-communication layer:
-  - connecting to Discord,
-  - receiving messages,
-  - saving every message to conversation_messages (short-term memory),
-  - a simple acknowledgement reply, NO AI logic yet.
+  1. connecting to Discord and filtering to direct messages,
+  2. converting a discord.Message into a channel-agnostic
+     application.models.IncomingMessage,
+  3. calling application.service.ApplicationService.handle_message()
+     (the ONLY call this file makes into the rest of the system --
+     never a domain module directly, never a `_*_in_transaction` method),
+  4. sending the returned OutgoingMessage.text back to the same DM,
+  5. raw audit logging of both sides of the exchange (Phase 0's
+     conversation_messages table -- an adapter-level concern, since the
+     Discord-specific channel/message ids it records are inherently
+     about THIS channel, not something the channel-agnostic application
+     layer should know about),
+  6. catching and logging any exception so a single bad message can
+     never crash the bot or leak an internal error to the user.
 
-The connection to the Coach/Keyholder/Decision engine will land in
-Phase 1+ at the spot marked `# TODO(phase 1)` below -- so it's clear
-where the bot will hook into the core/ layer once it's ready.
+No command parsing, no domain logic, and no decision-making lives here
+-- see application/README.md for the actual boundary and
+application/service.py for what "status"/"help" actually do.
 
 Running:
     python -m bot.discord_bot
@@ -21,72 +30,96 @@ Running:
 from __future__ import annotations
 
 import logging
+import uuid
 
 import discord
 
+from application.models import IncomingMessage
+from application.service import ApplicationService
 from core.config import Config, ConfigError
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
 from infrastructure.clock import Clock, SystemClock
+from infrastructure.database import Database as CoreDatabase
+from system.startup import StartupLeaseNotAcquired, on_system_startup
 
 logger = logging.getLogger("ai_coach_keyholder.bot")
 
 
 class CoachKeyholderBot(discord.Client):
-    def __init__(self, config: Config, db: Database, clock: Clock, *, intents: discord.Intents):
+    def __init__(
+        self, config: Config, db: Database, clock: Clock, application_service: ApplicationService,
+        *, intents: discord.Intents,
+    ):
         super().__init__(intents=intents)
         self.config = config
         self.db = db
         self.clock = clock
+        self.application_service = application_service
 
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
-        logger.info("Ready on %d server(s).", len(self.guilds))
+        logger.info("Ready. Listening for direct messages only (Phase 3.1 scope).")
 
     async def on_message(self, message: discord.Message) -> None:
-        # Ignore the bot's own messages so it doesn't loop on itself
+        # Ignore the bot's own messages so it doesn't loop on itself.
         if message.author == self.user:
             return
 
-        # Short-term memory: log every user message
-        self.db.save_conversation_message(
-            ConversationMessage(
-                created_at=self.clock.now(),
-                role=MessageRole.USER,
-                content=message.content,
-                discord_channel_id=str(message.channel.id),
-                discord_message_id=str(message.id),
-            )
-        )
+        # DM only, per this phase's explicit scope -- anything sent in
+        # a server channel is silently ignored, not processed and not
+        # replied to.
+        if not isinstance(message.channel, discord.DMChannel):
+            return
 
-        # TODO(phase 1): instead of a fixed reply, call:
-        #   1. context_engine -> ContextSnapshot
-        #   2. coach_engine + keyholder_engine -> CoachAssessment / KeyholderAssessment
-        #   3. decision_engine -> DecisionResult
-        #   4. ai/personality.py -> synthesize a single voice (+ explanation, if
-        #      decision.requires_user_approval or impact_score.is_significant)
-        # For now, we're only verifying that the communication layer works.
-        reply_text = (
-            "Recorded. (Phase 0 -- no AI logic yet, just verifying the connection.)"
-        )
+        now = self.clock.now()
+
+        # Audit logging is best-effort and never blocks the actual
+        # conversation -- a failure here must not prevent a reply from
+        # being generated or sent (a real gap found while writing this
+        # adapter's own tests: the first implementation coupled the
+        # incoming-message log with reply generation in one try/except,
+        # so a logging failure produced the generic error reply instead
+        # of the real one, and the OUTGOING log was unprotected entirely,
+        # able to crash the handler after the user had already gotten a
+        # reply).
+        self._log_message_best_effort(now, MessageRole.USER, message.content, message.channel.id, message.id)
+
+        try:
+            incoming = IncomingMessage(
+                channel="discord", external_user_id=str(message.author.id),
+                text=message.content, received_at=now,
+            )
+            # ApplicationService.handle_message() itself never raises
+            # (see its own docstring) -- this try/except is a second,
+            # independent safety net in case something fails before or
+            # after that call, not a substitute for that guarantee.
+            outgoing = self.application_service.handle_message(incoming)
+            reply_text = outgoing.text
+        except Exception:
+            logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
+            reply_text = "Something went wrong handling that. It's been logged."
 
         sent = await message.channel.send(reply_text)
 
-        self.db.save_conversation_message(
-            ConversationMessage(
-                created_at=self.clock.now(),
-                role=MessageRole.ASSISTANT,
-                content=reply_text,
-                discord_channel_id=str(message.channel.id),
-                discord_message_id=str(sent.id),
+        self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id)
+
+    def _log_message_best_effort(self, created_at, role: MessageRole, content: str, channel_id, message_id) -> None:
+        try:
+            self.db.save_conversation_message(
+                ConversationMessage(
+                    created_at=created_at, role=role, content=content,
+                    discord_channel_id=str(channel_id), discord_message_id=str(message_id),
+                )
             )
-        )
+        except Exception:
+            logger.exception("Failed to log a conversation message (role=%s) -- continuing anyway.", role.value)
 
 
-def build_bot(config: Config, db: Database, clock: Clock) -> CoachKeyholderBot:
+def build_bot(config: Config, db: Database, clock: Clock, application_service: ApplicationService) -> CoachKeyholderBot:
     intents = discord.Intents.default()
     intents.message_content = True  # required to read message content (privileged intent)
-    return CoachKeyholderBot(config, db, clock, intents=intents)
+    return CoachKeyholderBot(config, db, clock, application_service, intents=intents)
 
 
 def main() -> None:
@@ -104,7 +137,8 @@ def main() -> None:
     logging.getLogger("ai_coach_keyholder").setLevel(config.log_level)
 
     clock = SystemClock()
-    db = Database(config.db_path, backup_retention=config.backup_retention_count)
+    core = CoreDatabase(config.db_path)
+    db = Database(config.db_path, backup_retention=config.backup_retention_count, core=core)
 
     # Migrations (they take care of their own backup before applying, if the DB already exists)
     applied = db.migrate(now=clock.now())
@@ -116,7 +150,20 @@ def main() -> None:
     if daily_backup:
         logger.info("Created daily backup: %s", daily_backup)
 
-    bot = build_bot(config, db, clock)
+    # system_state_machine.md Section 7: on_system_startup() must run
+    # BEFORE the Discord bot starts / before the first request is
+    # accepted -- this was never actually wired into main() until now
+    # (Phase 0-2.x had no adapter calling it at all). process_id is a
+    # fresh uuid per process start, sufficient for the startup lease's
+    # purpose (distinguishing THIS run from a concurrently-running one).
+    try:
+        on_system_startup(core, str(uuid.uuid4()), clock)
+    except StartupLeaseNotAcquired:
+        logger.error("Another instance is already performing startup reconciliation. Exiting.")
+        raise SystemExit(1)
+
+    application_service = ApplicationService(config.db_path, core=core)
+    bot = build_bot(config, db, clock, application_service)
     bot.run(config.discord_token, log_handler=None)
 
 

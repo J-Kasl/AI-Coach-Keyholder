@@ -408,16 +408,20 @@ class PenaltyEngine:
         Plan -> Penalty Engine wiring).
 
         I26: `UNIQUE(completion_id)` on `recovery_credit_decisions`
-        (schema-enforced, not merely checked here) means a redelivered
-        `recovery_plan.task_completed` for the same completion raises
-        `sqlite3.IntegrityError` on the second attempt -- caught by
-        `consume_event()`'s own dedup (`domain_event_consumers`) in
-        normal operation, so this should never actually fire in
-        practice; the DB constraint is defense in depth, not the
-        primary guarantee (the same "two independent layers" pattern
-        already used for `TrustEvidence`'s
-        `UNIQUE(source_entity_type, source_entity_id, evidence_type)`,
-        TI25).
+        remains as schema-enforced defense in depth, but is no longer
+        the ONLY guard against double-processing -- an explicit
+        pre-check below (added during the focused post-Phase-2.7
+        architectural review) makes this function idempotent the same
+        way `_consume_confirmed_incident_in_transaction()` already is,
+        rather than relying on `sqlite3.IntegrityError` bubbling up
+        uncaught on a direct/manual second call (the event-driven path
+        was always protected by `consume_event()`'s own dedup; the
+        direct call via `record_recovery_credit_from_task_completion()`
+        was not). Unlike the Incident-consumption analog, which returns
+        `None` on redelivery, this function returns the PREVIOUSLY
+        recorded `RecoveryCreditDecision` on a duplicate call -- more
+        useful here, since the decision itself is naturally a
+        look-up-able record, not merely a "did something change" flag.
 
         Always writes a RecoveryCreditDecision, eligible or not,
         capped or not -- so a zero-hour outcome is never silently
@@ -425,6 +429,10 @@ class PenaltyEngine:
         (the same discipline as ExtensionDecision). Writes to
         `recovery_credit_ledger` ONLY when `credited_hours > 0`.
         """
+        existing = tx.fetch_one("SELECT * FROM recovery_credit_decisions WHERE completion_id = ?", (completion_id,))
+        if existing is not None:
+            return self._row_to_recovery_credit_decision(existing)
+
         window_row = tx.fetch_one("SELECT * FROM penalty_windows WHERE id = ?", (penalty_window_id,))
         if window_row is None:
             raise PenaltyWindowNotFound(penalty_window_id)
@@ -609,43 +617,65 @@ class PenaltyEngine:
 
     def resume(self, penalty_window_id: str, reason: FreezeReason, *, now: datetime) -> None:
         """
-        Closes the open FreezePeriod matching `reason` (the most recently
-        opened one, if more than one somehow exists -- see
-        penalty_engine/README.md for why this default was chosen). The
-        window returns to ACTIVE only once count_open_freeze_periods == 0
-        (I22/PW-FREEZE-SET) -- closing one of several concurrently open
-        reasons, with another still open, changes neither status nor
-        emits penalty_window.resumed.
+        Closes EVERY open FreezePeriod matching `reason` -- not only the
+        most recently opened one. Fixed during the focused post-Phase-2.7
+        architectural review: `emergency_override`/`temporary_wear_exemption`
+        have no schema-level uniqueness constraint against being opened
+        twice (unlike `partnered_intimacy_authorization`'s
+        idx_freeze_periods_one_open_intimacy_auth), so a double-submitted
+        emergency_freeze() (a double-tap, or a retry after a timeout)
+        could leave a second, orphaned open row that a single resume()
+        call silently failed to close -- the window would stay FROZEN
+        with no visible reason why. Closing all matches for the reason
+        is the safe default: resuming from a reason should mean no open
+        period for that reason remains, not "the most recent one is
+        gone."
+
+        The window returns to ACTIVE only once count_open_freeze_periods == 0
+        across ALL reasons (I22/PW-FREEZE-SET) -- closing every open
+        period for THIS reason, with a different reason's period still
+        open, changes neither status nor emits penalty_window.resumed.
         """
-        self._close_freeze_period_in_transaction(
+        self._close_freeze_periods_in_transaction(
             penalty_window_id, reason, now=now, end_reason=FreezeEndReason.RESUMED_NORMALLY,
         )
 
-    def _close_freeze_period_in_transaction(
+    def _close_freeze_periods_in_transaction(
         self, penalty_window_id: str, reason: FreezeReason, *, now: datetime, end_reason: FreezeEndReason,
         freeze_period_id: str | None = None,
     ) -> None:
-        def write(tx: Transaction, _state: object) -> bool:
+        """
+        Closes either one specific FreezePeriod (`freeze_period_id`
+        given -- used by `_close_expired_freezes()`, which already knows
+        exactly which row expired) or EVERY currently-open FreezePeriod
+        matching `reason` for this window (`freeze_period_id=None` --
+        used by `resume()`). Emits one `freeze_periods.closed` event per
+        row actually closed, so each closure remains individually
+        auditable even when several close in the same call.
+        """
+        def write(tx: Transaction, _state: object) -> tuple[list[str], bool]:
             if freeze_period_id is not None:
-                row = tx.fetch_one(
+                rows = tx.fetch_all(
                     "SELECT * FROM freeze_periods WHERE id = ? AND ended_at IS NULL", (freeze_period_id,),
                 )
             else:
-                row = tx.fetch_one(
+                rows = tx.fetch_all(
                     """
                     SELECT * FROM freeze_periods
                     WHERE penalty_window_id = ? AND reason = ? AND ended_at IS NULL
-                    ORDER BY started_at DESC LIMIT 1
+                    ORDER BY started_at
                     """,
                     (penalty_window_id, reason.value),
                 )
-            if row is None:
-                return False  # nothing open to close -- a harmless no-op, not an error
+            if not rows:
+                return [], False  # nothing open to close -- a harmless no-op, not an error
 
-            tx.execute(
-                "UPDATE freeze_periods SET ended_at = ?, end_reason = ? WHERE id = ?",
-                (_iso(now), end_reason.value, row["id"]),
-            )
+            closed_ids = [row["id"] for row in rows]
+            for row_id in closed_ids:
+                tx.execute(
+                    "UPDATE freeze_periods SET ended_at = ?, end_reason = ? WHERE id = ?",
+                    (_iso(now), end_reason.value, row_id),
+                )
 
             remaining_open = tx.fetch_one(
                 "SELECT COUNT(*) as n FROM freeze_periods WHERE penalty_window_id = ? AND ended_at IS NULL",
@@ -658,28 +688,34 @@ class PenaltyEngine:
                     "UPDATE penalty_windows SET status = ?, active_period_started_at = ? WHERE id = ?",
                     (PenaltyWindowStatus.ACTIVE.value, _iso(now), penalty_window_id),
                 )
-            return became_active_again
+            return closed_ids, became_active_again
 
-        def events(tx: Transaction, _state: object, became_active_again: bool) -> None:
-            write_event(
-                tx,
-                DomainEvent(
-                    event_type="freeze_periods.closed",
-                    source_module="penalty_engine",
-                    payload={"penalty_window_id": penalty_window_id, "reason": reason.value, "end_reason": end_reason.value},
-                    occurred_at=now,
-                ),
-            )
-            if end_reason == FreezeEndReason.EXPIRED:
+        def events(tx: Transaction, _state: object, result: tuple[list[str], bool]) -> None:
+            closed_ids, became_active_again = result
+            for freeze_id in closed_ids:
                 write_event(
                     tx,
                     DomainEvent(
-                        event_type="penalty_engine.freeze_expired",
+                        event_type="freeze_periods.closed",
                         source_module="penalty_engine",
-                        payload={"penalty_window_id": penalty_window_id, "reason": reason.value},
+                        payload={
+                            "freeze_period_id": freeze_id, "penalty_window_id": penalty_window_id,
+                            "reason": reason.value, "end_reason": end_reason.value,
+                        },
                         occurred_at=now,
                     ),
                 )
+            if end_reason == FreezeEndReason.EXPIRED:
+                for freeze_id in closed_ids:
+                    write_event(
+                        tx,
+                        DomainEvent(
+                            event_type="penalty_engine.freeze_expired",
+                            source_module="penalty_engine",
+                            payload={"freeze_period_id": freeze_id, "penalty_window_id": penalty_window_id, "reason": reason.value},
+                            occurred_at=now,
+                        ),
+                    )
             if became_active_again:
                 write_event(
                     tx,
@@ -729,7 +765,7 @@ class PenaltyEngine:
                 (penalty_window_id, _iso(now)),
             )
         for row in expired:
-            self._close_freeze_period_in_transaction(
+            self._close_freeze_periods_in_transaction(
                 penalty_window_id, FreezeReason(row["reason"]), now=now,
                 end_reason=FreezeEndReason.EXPIRED, freeze_period_id=row["id"],
             )
@@ -802,6 +838,15 @@ class PenaltyEngine:
                 (penalty_window_id,),
             )
         return frozenset(r["trust_domain"] for r in rows)
+
+    @staticmethod
+    def _row_to_recovery_credit_decision(row) -> RecoveryCreditDecision:
+        return RecoveryCreditDecision(
+            id=row["id"], created_at=_parse_iso(row["created_at"]),
+            completion_id=row["completion_id"], penalty_window_id=row["penalty_window_id"],
+            proposed_hours=row["proposed_hours"], credited_hours=row["credited_hours"],
+            capacity_limited=bool(row["capacity_limited"]), explanation=row["explanation"],
+        )
 
     @staticmethod
     def _row_to_window(row) -> PenaltyWindow:

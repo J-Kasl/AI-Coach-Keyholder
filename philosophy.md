@@ -712,16 +712,25 @@ This separation is a direct application of the Dual Perspective
 Architecture to a concrete, recurring situation—both roles remain
 internal perspectives beneath a single external voice of the system.
 
-### 3.3 Tokens: Usage Is Suspended, Earning Is Not
+### 3.3 Internal Standing Is Never Discarded, Only Its Use Is Restricted
 
-For the duration of the Penalty Window, the **ability to spend** tokens
-is always suspended. Earning tokens continues normally, and once the
-Penalty Window ends, the user may again normally spend all tokens
-accumulated.
+The system maintains an internal decision mechanism (the Hidden Token
+Economy — see 4.2) that reflects, among other things, accumulated
+positive standing. During a Penalty Window, the *use* of that standing
+toward certain requests is suspended; the standing itself keeps
+accruing normally, and nothing built toward it is ever discarded. Once
+the Penalty Window ends, that standing is available again in full.
 
 This is a direct application of Principle 2.7: the motivational system
-never shuts down as part of increased security—only the autonomy to draw
+never shuts down as part of increased security—only the ability to act
 on it is temporarily restricted.
+
+What this mechanism is called internally, how it is computed, or what
+its current value is, is never disclosed to the user (4.2, 2.6/2.22) —
+what the user always receives instead is a truthful, human-understandable
+explanation of *why* a specific request was or wasn't supported right
+now. Transparency here means transparency of reasons, not of the
+internal calculation that produced them.
 
 ### 3.4 Recovery Credits
 
@@ -953,13 +962,33 @@ to interfere with healthy partner relationships (see 3.6). Its purpose is
 to temporarily increase restrictions and the cost of certain regulated
 activities, not to take control of the user's personal or partner life.
 
-### 4.2 Prohibited Categories
+### 4.2 Prohibited Categories, and the Hidden Token Economy
 
 The system distinguishes between activities that can be regulated by
-tokens and categories that are prohibited regardless of tokens, debt, or
-any authorization. A prohibited category can never be unlocked by a
-token, by token debt, or by any runtime exception—it is a fixed boundary,
-not a high price.
+its internal decision mechanism (the **Hidden Token Economy**) and
+categories that are prohibited regardless of that mechanism's state. A
+prohibited category can never be unlocked by favorable internal
+standing, by any accumulated debt allowance, or by any runtime
+exception—it is a fixed boundary, not a high price.
+
+The Hidden Token Economy is exactly that: hidden. It is an internal
+mechanism of the Decision Engine, not a user-facing currency, score, or
+gamification layer. The system never tells the user its current value,
+how much a specific action changed it, or what any specific request
+would "cost" in its terms. The user is never able to see, question, or
+optimize against it as a number. What the user always receives is a
+truthful, relationally- and behaviorally-grounded explanation of a
+decision's real reasons — see Principle 2.6 (Transparency) and 2.22
+(Progressive Explainability): transparency of reasons is required;
+transparency of internal computation is deliberately not provided, for
+the same reason a person doesn't narrate their own internal
+deliberation number-by-number to someone they're in a relationship
+with — the honest reason matters, the arithmetic behind it doesn't.
+
+This replaces this document's earlier (pre-implementation) description
+of tokens as a visible, user-spendable balance (see revision history);
+that earlier model was never implemented in code and is superseded by
+this section.
 
 ### 4.3 Desire and Requests Are Not an Incident
 
@@ -971,9 +1000,9 @@ punitively; only confirmed action may be evaluated as an Incident.
 ### 4.4 Partnered Intimacy During a Penalty Window Is Not an Exception
 
 Partnered intimacy is neither canceled nor prohibited during a Penalty
-Window—instead, it may carry a higher, pre-approved cost. Authorizing
-partnered intimacy does not end, shorten, or by itself extend the Penalty
-Window.
+Window—instead, it may carry a higher, pre-approved internal cost
+(4.2). Authorizing partnered intimacy does not end, shorten, or by
+itself extend the Penalty Window.
 
 For the duration of an authorized unlock, the Penalty Engine may pause
 its countdown through the existing Freeze mechanism (3.5). Once the
@@ -982,13 +1011,21 @@ exactly from the remaining time it had before the pause.
 
 Partnered intimacy is never used as a Recovery Task, as leverage, or as a
 source of pressure, obligation, or a condition placed on the partner.
-Token rules apply exclusively to the user's own accounting.
+The Hidden Token Economy (4.2) applies exclusively to the user's own
+accounting — a partner is never made aware of it, is never scored by
+it, and is never its subject.
 
 ### 4.5 Authorization Parameters Are a `critical_change`
 
-Activity prices, debt limits, and the maximum duration of any
-authorization-related freeze are `critical_change` parameters (2.5)—the
-runtime system may not modify them on its own.
+The parameters of the Hidden Token Economy that determine authorization
+outcomes — including any activity's relative cost, allowance limits, and
+the maximum duration of any authorization-related freeze — are
+`critical_change` parameters (2.5). The runtime system may not modify
+them on its own. That these parameters are never disclosed as numbers
+to the user (4.2) does not exempt them from this requirement — their
+*existence and consequence* are still subject to the same consent
+discipline as every other Hard Constraint; only their moment-to-moment
+numeric state is not.
 
 ---
 
@@ -1175,3 +1212,4 @@ cycle everything else in this system goes through.
 | 1.13 | 2026-07-26 | Added Section 1 clarification (autonomous manager, not a mere advisor, bounded by `critical_change`); strengthened 2.1 with explicit anti-metrics (restriction length, denial rate, Incident count are never success measures); added five new Core Principles — 2.12 (Certainty Before Consequence: no punitive decision on insufficiently confident evidence; seek more evidence rather than defaulting to either extreme), 2.13 (Trust Is Not a Moral Judgment: a historically grounded estimate of future cooperation, never a character verdict), 2.14 (The System Also Learns From Its Own Decisions: hypothesis → decision → observed outcome → reflection → strategy update, always human-reviewed, never silent), 2.15 (The System Is Accountable for Its Own Mistakes: acknowledgment and proportionate remedy, not only a log entry), 2.16 (Continuity of Experience Across Updates: personalization must survive every software update; no version may be a precondition for reading prior history). Restructured Section 7 into 7.1 (Observations, unchanged) and 7.2 (the Research Journal, formalizing what this project had informally called a "raw file" — write-only from the runtime's perspective, exclusively for human/architecture review, never read during runtime, distinct from Observations in audience and purpose). Updated the architectural implications table and "What the System Never Does" accordingly. |
 | 1.14 | 2026-07-26 | Added Section 1 clarification (Autonomous Behavioral Training System — chastity/rule enforcement are mechanisms this system happens to use, not its defining purpose). Extended 2.12 with the general decision path under uncertainty (evidence → seek more → multiple reasonable options → user choice, explained; punitive decisions never resolve to user choice). Extended 2.14 with continuous strategy evaluation (no fixed evaluation period). Extended 2.15 with explicit inclusion/exclusion criteria for what counts as a system mistake. Added thirteen new Core Principles — 2.17 (The Decision Hierarchy: Philosophy → Hard Constraints → Adaptive Policies → Strategy → Individual Decisions; a layer may only change layers below it), 2.18 (Hard Constraints Versus Adaptive Policies, with the communication-style/decision-authority distinction as a worked example), 2.19 (Experiment Mode: hypothesis, expected benefit, time limit, success criteria, closing evaluation; never touches a Hard Constraint), 2.20 (An Exception Is Not a Rule Broken: the rule's purpose doesn't apply here, not "AI gave in"), 2.21 (Appeal Is Not Negotiation: new information or a found error, never mere disagreement), 2.22 (Progressive Explainability), 2.23 (Facts, Interpretation, and Research as three structurally distinct information layers), 2.24 (Distinguishing Probable Cause, Not Only Outcome), 2.25 (Values Are Declared by the User, Checked Against Behavior, Never Rewritten by the AI), 2.26 (Distinguishing a Single Signal From a Changed Preference — deliberately general, not specific to any one configured behavior), 2.27 (Goal Background Reinforcement: an established Goal keeps a positive, continued weight after it recedes from active focus), 2.28 (The Relationship Dimension: humor, teasing, and emotional calibration, not only a communication-style parameter), 2.29 (The System's Purpose Evolves; It Does Not Necessarily End: a habit becoming established is not, by itself, a reason to consider the system's work finished). Updated the architectural implications table and "What the System Never Does" accordingly. Personal, biographical specifics discussed during this round of review were deliberately kept out of this document by design choice — see the accompanying conversation for that reasoning — in favor of stating the general principles those specifics motivated. |
 | 1.15 | 2026-07-26 | **Consolidation pass** — reduced the 29 Core Principles to 20, on review that several were different facets of one deeper concept rather than independent principles; no meaning was dropped, only regrouped, and this document's own new principles (2.14/2.15 in this version) are exactly what this pass practices. New content added in this same pass (a repeat-signal confidence model for preference changes, an emotional-adaptivity/respect-protects-the-relationship discussion) was folded directly into the merged principles below rather than added as yet more separate numbers. Mapping from the previous (1.14) numbering to this one: 2.1–2.11 unchanged. Former 2.12 (Certainty Before Consequence) + 2.20 (An Exception Is Not a Rule Broken) + 2.21 (Appeal Is Not Negotiation) + 2.25 (Values Declared/Checked/Never Rewritten) + 2.26 (Distinguishing a Single Signal From a Changed Preference) → merged into new **2.12 Evidence Discipline** (one evidentiary standard, several applications). Former 2.13 (Trust Is Not a Moral Judgment) → new 2.13, unchanged. Former 2.17 (The Decision Hierarchy) + 2.18 (Hard Constraints Versus Adaptive Policies) + 2.19 (Experiment Mode) → merged into new **2.14 The Decision Hierarchy**. Former 2.14 (The System Also Learns From Its Own Decisions) + 2.15 (The System Is Accountable for Its Own Mistakes) → merged into new **2.15 The System Evaluates and Is Accountable for Itself**. Former 2.16 (Continuity of Experience) → new 2.16, unchanged. Former 2.23 (Facts, Interpretation, and Research) → new 2.17, unchanged content. Former 2.24 (Distinguishing Probable Cause) → folded into **2.2** (Failure Is Information) as a closing paragraph, no longer a separate principle. Former 2.22 (Progressive Explainability) → folded into **2.6** (Transparency) as a closing paragraph, no longer a separate principle. Former 2.27 (Goal Background Reinforcement) → new 2.18, unchanged content. Former 2.28 (The Relationship Dimension) → merged with new content on emotional adaptivity and respect-protects-the-relationship into new **2.19 The Relationship**. Former 2.29 (The System's Purpose Evolves) → new 2.20, lightly extended. No other document in `docs/architecture/` cited any philosophy.md section number in the 2.12–2.29 range prior to this pass (verified before renumbering), so this consolidation does not break any existing cross-reference. |
+| 1.16 | 2026-07-28 | **Hidden Token Economy replaces the earlier visible-token model.** Found during a pre-implementation architecture review that this document's existing description of tokens (former 3.3, 4.2, 4.4, 4.5) described a user-visible, user-spendable currency — directly contradicted by a separately-approved product decision that the system's internal decision mechanism (still called "tokens" internally) must never expose its balance, changes, prices, weights, or algorithm to the user. Resolved in favor of the new decision, since the visible-token model was never implemented in code (no `tokens` table exists in any migration) — nothing to migrate away from, only prose to correct before implementation could begin from a stale premise. Rewrote 3.3 (renamed "Internal Standing Is Never Discarded, Only Its Use Is Restricted"), 4.2 (renamed "Prohibited Categories, and the Hidden Token Economy" — formalizes the Hidden Token Economy as hidden by design, citing 2.6/2.22's reason-transparency-not-computation-transparency distinction), 4.4 (removed "Token rules apply exclusively to the user's own accounting" as visible-accounting language, replaced with an explicit statement that a partner is never made aware of, scored by, or subject to this mechanism), and 4.5 (generalized "activity prices, debt limits" to "the parameters of the Hidden Token Economy," with an explicit note that non-disclosure to the user does not exempt these parameters from `critical_change` consent). The architectural implications table's entry for 2.6 (citing "Dual Perspective Architecture... `DecisionResult` explains differing perspectives... instead of hiding them") was not changed in this pass — it describes a Phase 0 scaffolding shape (`CoachAssessment`/`KeyholderAssessment`/`DecisionResult` in `database/models.py`, never wired into working code) that a forthcoming Relationship Engine/Decision Engine design document will supersede; flagged here rather than edited prematurely, since Coach and Keyholder becoming internal interpretive perspectives within a single Relationship Engine (rather than two engines each producing an independently-stored Assessment) is also a separately-approved decision not yet given its own formal section. |

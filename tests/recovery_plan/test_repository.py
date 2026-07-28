@@ -18,6 +18,7 @@ import pytest
 from infrastructure.database import Database as CoreDatabase
 from recovery_plan.models import RecoveryPlanStatus, RecoveryTaskStatus
 from recovery_plan.repository import (
+    InvalidTaskTransitionError,
     RecoveryPlanManager,
     RecoveryPlanNotFoundError,
     RecoveryTaskNotFoundError,
@@ -216,7 +217,85 @@ class TestTaskLifecycle:
             rp.complete_task("does-not-exist", now=FIXED_TIME)
 
 
-class TestRPT6CapacityIsAdvisoryHere:
+class TestInvalidTaskTransitions:
+    """
+    Finding #1 from the focused post-Phase-2.7 architectural review:
+    none of accept_task()/complete_task()/withdraw_task() checked the
+    task's current status before applying the new one. An EXPIRED or
+    WITHDRAWN task could still be "completed", producing a real
+    RecoveryTaskCompletion (and downstream Recovery Credit) for a task
+    the system itself already considered dead.
+    """
+
+    def test_cannot_complete_an_expired_task(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.regenerate("win-1", new_target_active_hours=30.0, now=FIXED_TIME + timedelta(hours=1))
+        expired = rp.get_recovery_task(task.id)
+        assert expired.status == RecoveryTaskStatus.EXPIRED  # sanity check on the setup
+
+        with pytest.raises(InvalidTaskTransitionError):
+            rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=2))
+
+    def test_cannot_complete_a_withdrawn_task(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.withdraw_task(task.id, now=FIXED_TIME + timedelta(minutes=10))
+
+        with pytest.raises(InvalidTaskTransitionError):
+            rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+
+    def test_cannot_complete_an_already_completed_task_twice(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+
+        with pytest.raises(InvalidTaskTransitionError):
+            rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=2))
+
+    def test_cannot_accept_an_already_accepted_task(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.accept_task(task.id, now=FIXED_TIME + timedelta(minutes=10))
+
+        with pytest.raises(InvalidTaskTransitionError):
+            rp.accept_task(task.id, now=FIXED_TIME + timedelta(minutes=20))
+
+    def test_cannot_withdraw_a_completed_task(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+
+        with pytest.raises(InvalidTaskTransitionError):
+            rp.withdraw_task(task.id, now=FIXED_TIME + timedelta(hours=2))
+
+    def test_completing_directly_from_proposed_still_works(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        """Completion without an explicit accept step remains legitimate
+        -- this guard narrows what's INVALID, not what's ALLOWED."""
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        completion = rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+        assert completion is not None
+
+    def test_error_message_names_the_actual_and_allowed_states(self, rp: RecoveryPlanManager, core: CoreDatabase) -> None:
+        _create_penalty_window(core)
+        plan = rp.create_plan("win-1", base_duration_hours=24.0, now=FIXED_TIME)
+        task = rp.propose_task(plan.id, "Task A", "desc", credit_hours=4.0, now=FIXED_TIME)
+        rp.withdraw_task(task.id, now=FIXED_TIME + timedelta(minutes=10))
+        try:
+            rp.complete_task(task.id, now=FIXED_TIME + timedelta(hours=1))
+        except InvalidTaskTransitionError as e:
+            assert e.current_status == "withdrawn"
+            assert e.requested_status == "completed"
+        else:
+            pytest.fail("expected InvalidTaskTransitionError")
+
     """RPT6's actual capping happens in the (deferred) Penalty Engine
     Recovery Credit integration -- this module only stores the Coach's
     proposed credit_hours without re-enforcing the cap itself (3.3)."""

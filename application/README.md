@@ -1,0 +1,143 @@
+# application — Phase 3.1: the first usable vertical slice
+
+The first module in this system built for an *interface*, not a
+domain concept. Ties every domain module built so far into one
+channel-agnostic entry point, and gives Discord (or any future
+channel) exactly one thing to call: `ApplicationService.handle_message()`.
+
+## 1. The boundary between the Discord adapter and the application layer
+
+```
+bot/discord_bot.py                    application/
+  (Discord-specific)                    (channel-agnostic)
+──────────────────────                ─────────────────────
+discord.Message                →      IncomingMessage
+  .author.id, .content,                 channel, external_user_id,
+  .channel, .id                          text, received_at
+
+CoachKeyholderBot.on_message()  →     ApplicationService.handle_message()
+  - filters to DMs only                 - resolves/creates the UserAccount
+  - converts the message                - routes the text to a command
+  - calls handle_message()              - calls domain modules' PUBLIC
+  - sends the reply                       read APIs only
+  - best-effort audit logging           - never raises
+
+discord.Message reply           ←     OutgoingMessage.text
+```
+
+**`bot/discord_bot.py` never imports `trust_manager`, `penalty_engine`,
+`recovery_plan`, or `goal_management`.** It imports exactly
+`application.service.ApplicationService` and
+`application.models.IncomingMessage`/`OutgoingMessage`. Every domain
+read in this slice (the `status` command) happens inside
+`application/service.py`, through a domain module's existing public
+API (`PenaltyEngine.get_active_or_frozen_penalty_window()`) — never a
+`_*_in_transaction` method, and never a raw table read.
+
+**`application/` never imports `discord`.** Nothing in this package
+knows a Discord message exists — `IncomingMessage`/`OutgoingMessage`
+are plain dataclasses with no channel-specific fields. A second adapter
+(a CLI, an HTTP endpoint, a different chat platform) would construct
+`IncomingMessage(channel="cli", external_user_id=..., text=..., received_at=...)`
+and call the exact same `handle_message()` — nothing in this layer
+would need to change.
+
+## 2. The supported flow of one message
+
+```
+Discord DM
+  |
+  v
+CoachKeyholderBot.on_message()
+  |  filters: ignore own messages, ignore anything not a DMChannel
+  v
+best-effort audit log (conversation_messages, Discord-specific columns
+  -- an adapter-level concern, kept from Phase 0)
+  |
+  v
+IncomingMessage(channel="discord", external_user_id=str(author.id), text, received_at)
+  |
+  v
+ApplicationService.handle_message()
+  |  UserService.get_or_create_user("discord", external_id, now)
+  |      -- looks up (channel, external_id) in user_channel_identities;
+  |         creates a UserAccount + identity row on first contact
+  v
+CommandRouter.route(text, RequestContext(user, now))
+  |  exact-match, case-insensitive, against a fixed, explicit command set
+  v
+a registered handler (e.g. _handle_status) calls a domain module's
+  public read API and returns OutgoingMessage
+  |
+  v  (back up through handle_message(), never raises)
+discord.Message reply sent to the same DM
+  |
+  v
+best-effort audit log of the outgoing message
+```
+
+Both audit-log steps are deliberately isolated in their own
+try/except (`_log_message_best_effort()`) — a logging failure must
+never replace a real reply with the generic fallback, and must never
+prevent the reply from being sent at all. Found as a real gap while
+writing this adapter's own tests (the first draft coupled incoming-log
+and reply generation in one try/except, and left the outgoing log
+completely unprotected) — see `tests/bot/test_discord_bot.py`'s
+`TestAdapterLevelErrorHandling` for the two distinct failure modes it
+now separates: a logging failure that must NOT affect the reply, and a
+failure reaching the application layer that MUST produce the safe
+fallback.
+
+## 3. What actually works today
+
+- **A real, minimal command set** — `help` (lists commands), `status`
+  (reports the current `PenaltyWindow`, if any, via
+  `PenaltyEngine.get_active_or_frozen_penalty_window()` — a real read
+  against real domain state, not a mock).
+- **`on_system_startup()` is now actually wired into the running
+  process** (`bot/discord_bot.py main()`) — a real gap fixed while
+  building this: `system_state_machine.md` Section 7 has always said
+  this must run "before the Discord bot starts," but no adapter
+  actually called it until this phase. Trust Manager/Penalty Engine/
+  Recovery Plan/Goal Management recovery, plus the outbox publisher, now
+  genuinely run at process startup, not only inside tests.
+- **User identity across restarts** — the same Discord account always
+  resolves to the same `UserAccount`, with `last_seen_at` tracked.
+- **DM-only communication**, enforced by the adapter, tested directly
+  (`TestDMFiltering`).
+- **Errors are caught at two independent layers** — inside
+  `ApplicationService.handle_message()` itself, and again in the
+  adapter's own call into it — and always produce a safe, generic
+  reply, never a leaked exception message or a crashed handler.
+- **Everything above is tested without a live Discord connection** —
+  `discord.Client.on_message()` is a plain coroutine; the adapter tests
+  call it directly with a constructed fake message via `asyncio.run()`
+  (no `pytest-asyncio` dependency added — stdlib only).
+
+## 4. What is deliberately deferred
+
+- **Any actual Coach/Keyholder reasoning, Behavior Learning, or LLM
+  involvement** — `help`/`status` are hand-written, fixed responses
+  against real data; nothing here calls an LLM or makes a judgment
+  call. `ai/`/`core/coach_engine.py` still do not exist.
+- **A natural-language router** — `CommandRouter` matches exact,
+  trimmed, lowercased command strings only. No intent parsing.
+- **Trust Manager/Goal Management status commands** — both modules are
+  designed around looking up a specific `domain_id`/`goal_group_id`;
+  neither has a "list everything relevant" read API yet. `status` is
+  scoped to Penalty Engine only in this slice rather than inventing a
+  new domain-module method just to make the command feel complete.
+- **Any write-capable command** (starting/freezing/completing anything,
+  proposing or accepting a Goal change) — every command in this slice
+  is read-only. Building a write path means designing consent/
+  confirmation UX for Discord specifically, deliberately out of scope
+  for "does the pipe work at all."
+- **Multi-user support in the domain modules themselves** —
+  `user_accounts`/`user_channel_identities` are purely this layer's own
+  bookkeeping. No domain table anywhere has a `user_id` column; this
+  system remains built for exactly one real person, as it always has
+  been. See the schema comment in migration 011 for the explicit
+  reasoning against reading this as a step toward multi-tenancy.
+- **Any channel other than Discord** — the boundary above is designed
+  to make a second adapter possible without touching `application/`,
+  but no second adapter exists yet.

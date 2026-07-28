@@ -62,16 +62,20 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**288 passing tests** across the whole repository (`pytest`), including
-a repository-wide guard test that mechanically confirms no production
-code outside `infrastructure/clock.py` calls `datetime.now()`/
-`datetime.utcnow()` directly.
+**374 passing tests** across the whole repository (`pytest`), including
+two repository-wide guard tests: one that mechanically confirms no
+production code outside `infrastructure/clock.py` calls
+`datetime.now()`/`datetime.utcnow()` directly, and one that confirms
+every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
+form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
+in `trust_manager/README.md` and `penalty_engine/README.md`).
 
-Nine sequential database migrations are applied so far
-(`database/migrations/001` through `009`), covering the initial Phase 0
+Eleven sequential database migrations are applied so far
+(`database/migrations/001` through `011`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
-Recovery Plan, and Recovery Credit. See
+Recovery Plan, Recovery Credit, Goal Management, and the application
+layer's user identity bookkeeping. See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -88,10 +92,38 @@ the hard rule migrations must follow (never destructive to user data).
 9. ~~Extension (`should_extend()`, the unified consumption path)~~ **done (Phase 2.5)**
 10. ~~Recovery Plan (lifecycle as a reaction to Penalty Window events)~~ **done (Phase 2.6)**
 11. ~~Recovery Credit integration (Penalty Engine consumes `recovery_plan.task_completed`)~~ **done (Phase 2.7)**
+12. ~~Focused architectural review + fixes (task-transition guards, `resume()` closing all matching freezes, Recovery Credit idempotency)~~ **done (Phase 2.8)**
+13. ~~Goal Management (lifecycle, evidence, evaluation, the `GoalChangeProposal` confirmation mechanism)~~ **done (Phase 2.9)**
+14. ~~First usable vertical slice: `application/` + a thin Discord adapter~~ **done (Phase 3.1)**
 
-**Next up:** Goal Manager, the first module independent of the Trust
-Manager -> Penalty Engine -> Recovery Plan -> Recovery Credit branch
-above, which is now a complete, closed lifecycle.
+**Next up:** undecided — the project is deliberately pausing new
+architecture and new modules to gather real usage experience over
+Discord first (see "Recent architecture proposals" below). The next
+priority (Relationship Engine implementation, AI Identity
+implementation, onboarding, or something else) will be chosen based on
+that experience, not decided in advance.
+
+### Recent architecture proposals (not yet approved for implementation)
+
+Two draft architecture documents exist, both explicitly marked **draft,
+not approved for implementation** in their own headers — read them as
+proposals to be validated against real usage, not as a queue of what
+gets built next:
+
+- [`docs/architecture/relationship_decision_engine_technical_design.md`](docs/architecture/relationship_decision_engine_technical_design.md)
+  (v1.1) — how Domain State becomes one unified `Decision`, via a
+  Relationship Engine (Coach/Keyholder as two interpretive perspectives,
+  not two independent agents) and a Decision Engine (Entitlement
+  Classes, the Hidden Token Economy).
+- [`docs/architecture/ai_identity_technical_design.md`](docs/architecture/ai_identity_technical_design.md)
+  (v1.0) — the communication layer that phrases an already-final
+  `Decision` in one of fifteen selectable identities' voice, without
+  ever being able to change what was decided.
+
+`philosophy.md` v1.16 already reflects one decision from this line of
+work (Section 4.2: the Hidden Token Economy replaces an earlier,
+never-implemented visible-token model) — see its own revision history
+for the reasoning.
 
 ### Phase 0 foundation (unchanged since the original design)
 
@@ -166,10 +198,20 @@ it the bot won't see message content -- `discord_bot.py` relies on it).
 python -m bot.discord_bot
 ```
 
-On first run, `data/coach_keyholder.db` is created automatically and
-migrations are applied. For now the bot only logs messages and replies
-with an acknowledgement -- this verifies the communication layer, not
-the AI logic.
+On first run, `data/coach_keyholder.db` is created automatically,
+migrations are applied, and `on_system_startup()` runs (Trust Manager/
+Penalty Engine/Recovery Plan/Goal Management recovery, then the outbox
+publisher) before the bot connects to Discord.
+
+Send the bot a direct message. Two commands are supported so far:
+`help` (lists commands) and `status` (reports the current Penalty
+Window, if any — a real read against real domain state). Anything else
+gets a polite "I don't recognize that yet." Only DMs are processed;
+messages in a server channel are ignored. See
+[`application/README.md`](application/README.md) for the full
+boundary between the Discord adapter and the channel-agnostic
+application layer underneath it, and what's deliberately not built
+yet (no Coach/Keyholder reasoning, no LLM, no write-capable commands).
 
 ## Structure
 
@@ -182,6 +224,11 @@ infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
 trust_manager/   # first domain module (Slice 1+2 -- see trust_manager/README.md)
 penalty_engine/  # second domain module (Slice 1 + Extension + Recovery Credit -- see penalty_engine/README.md)
 recovery_plan/   # third domain module (see recovery_plan/README.md)
+goal_management/ # fourth domain module, first independent of the Trust
+                 # Manager -> Penalty Engine -> Recovery Plan branch
+                 # (see goal_management/README.md)
+application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
+                 # UserService, CommandRouter, ApplicationService (see application/README.md)
 system/          # composition layer: startup orchestrator, cross-module wiring (see system/README.md)
 docs/architecture/  # architecture baseline: system_state_machine.md,
                      # seven domain technical designs, implementation_conventions.md,
@@ -248,3 +295,51 @@ covers, what's deferred, and any real findings.
   This closes the full Incident -> Assessment -> Penalty -> Recovery ->
   Credit -> Penalty Adjustment lifecycle described in
   `penalty_window_technical_design.md` Section 3.4.
+- **Phase 2.8** -- a focused architectural review after the milestone
+  above (deliberately scoped to logical contradictions, invalid-state
+  risks, module coupling, and expensive-to-reverse decisions -- not a
+  full style/naming pass) found and fixed three real bugs: task
+  transitions with no status guard (`recovery_plan/README.md`), `resume()`
+  closing only the most recently opened freeze period instead of every
+  matching one, and an idempotency asymmetry in Recovery Credit's
+  direct-call path (both `penalty_engine/README.md`). A fourth finding
+  -- composition-layer coupling via underscore-prefixed method calls in
+  `system/startup.py` -- was deliberately left as documented, not
+  restructured (`system/README.md`), consistent with this project's
+  standing rule against designing an abstraction before the pattern
+  has repeated enough times to reveal its actual shape.
+- **Phase 2.9** -- Goal Management: the fourth domain module, and the
+  first independent of the Trust Manager -> Penalty Engine -> Recovery
+  Plan -> Recovery Credit branch (it reads nothing from the Trust
+  Manager for any decision of its own). Covers the Goal lifecycle
+  (create/pause/resume/complete/archive), append-only GoalEvidence and
+  GoalEvaluation, and the GoalChangeProposal confirmation mechanism that
+  gates adaptation/replacement/abandonment behind an explicit,
+  content-bound user decision. Two real gaps were found in the
+  architecture document while implementing it -- `GoalInterventionType`
+  has no value for proposing goal completion, despite the document's
+  own prose requiring one, and the lifecycle diagram leaves adaptation
+  from a PAUSED goal ambiguous -- both resolved with the
+  least-presumptuous reading available and flagged, not silently
+  decided (`goal_management/README.md`). GoalAccountabilityAssessment,
+  GoalNegotiation, and the actual Trust Manager integration are
+  deferred -- they depend on Coach/Keyholder reasoning this system does
+  not have built yet.
+- **Phase 3.1** -- the first usable vertical slice: a real, minimal path
+  from a Discord direct message all the way to a domain module's data
+  and back. Introduced `application/`, a channel-agnostic layer
+  (`IncomingMessage`/`OutgoingMessage`, `UserService`, `CommandRouter`,
+  `ApplicationService`) that `bot/discord_bot.py` -- rewritten as a thin
+  adapter -- is the only thing that knows about Discord specifically.
+  Two explicit, read-only commands (`help`, `status`); `status` reads
+  `PenaltyEngine.get_active_or_frozen_penalty_window()` directly,
+  proving the whole pipe against real data. Two real gaps were found
+  and fixed along the way: `on_system_startup()` had never actually
+  been wired into any running process before this phase, despite
+  `system_state_machine.md` requiring it since Section 7 was written;
+  and the adapter's first draft coupled audit logging with reply
+  generation, so a logging failure silently replaced a real reply with
+  the generic error message. See `application/README.md` for the full
+  adapter/application-layer boundary, the supported message flow, and
+  what's deliberately not built yet (Coach/Keyholder reasoning, an LLM,
+  any write-capable command, multi-user support in the domain modules).

@@ -100,3 +100,19 @@ capacity, after exactly one `on_system_startup()` call — not two.
   alone** — the actual `penalty_window_id`s found without a matching
   plan, so a future observability layer (or a human reading logs) can
   act on which windows are affected, not just that some are.
+
+## A real bug found and fixed (Phase 2.7 focused review)
+
+`accept_task()`/`complete_task()`/`withdraw_task()` did not check a
+task's current status before applying the new one. Concretely, this
+meant a task already `EXPIRED` by a plan regeneration (3.4), or already
+`WITHDRAWN`, could still be `complete_task()`'d — producing a real
+`RecoveryTaskCompletion` and, downstream, real Recovery Credit for a
+task the system itself already considered dead. Fixed with an explicit
+`allowed_from` check per transition
+(`InvalidTaskTransitionError` if violated):
+`accept_task()` only from `PROPOSED`; `withdraw_task()` from
+`PROPOSED`/`ACCEPTED`; `complete_task()` from `PROPOSED`/`ACCEPTED`
+(completing directly without an explicit accept step remains
+legitimate — this narrows what's invalid, not what's allowed). See
+`tests/recovery_plan/test_repository.py::TestInvalidTaskTransitions`.

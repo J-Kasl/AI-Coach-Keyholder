@@ -208,6 +208,89 @@ class TestFreezeAsSetOfReasons:
             pe.freeze("does-not-exist", FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME)
 
 
+class TestResumeClosesAllMatchingOpenFreezes:
+    """
+    Finding #2 from the focused post-Phase-2.7 architectural review:
+    `emergency_override`/`temporary_wear_exemption` have no
+    schema-level uniqueness constraint preventing a second concurrent
+    open period (unlike `partnered_intimacy_authorization`'s
+    idx_freeze_periods_one_open_intimacy_auth). A double-submitted
+    emergency_freeze() (double-tap, or retry after a timeout) used to
+    leave an orphaned second open row that a single resume() call
+    silently failed to close.
+    """
+
+    def test_double_emergency_freeze_then_single_resume_fully_reactivates(
+        self, pe: PenaltyEngine, tm: TrustManager,
+    ) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+
+        # Simulates a double-submitted panic button -- two open
+        # emergency_override periods for the same window.
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1))
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1, minutes=1))
+
+        with pe._core.transaction() as tx:
+            open_count = tx.fetch_one(
+                "SELECT COUNT(*) as n FROM freeze_periods WHERE penalty_window_id = ? AND reason = 'emergency_override' AND ended_at IS NULL",
+                (window.id,),
+            )["n"]
+        assert open_count == 2  # sanity check on the setup
+
+        pe.resume(window.id, FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME + timedelta(hours=2))
+
+        state = pe.get_active_or_frozen_penalty_window()
+        assert state.status == PenaltyWindowStatus.ACTIVE  # not left FROZEN by an orphaned second row
+
+    def test_resume_closes_every_open_row_not_just_the_newest(self, pe: PenaltyEngine, tm: TrustManager) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1))
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1, minutes=1))
+
+        pe.resume(window.id, FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME + timedelta(hours=2))
+
+        with pe._core.transaction() as tx:
+            still_open = tx.fetch_all(
+                "SELECT * FROM freeze_periods WHERE penalty_window_id = ? AND reason = 'emergency_override' AND ended_at IS NULL",
+                (window.id,),
+            )
+        assert still_open == []
+
+    def test_one_freeze_periods_closed_event_per_row(self, pe: PenaltyEngine, tm: TrustManager) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1))
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1, minutes=1))
+        pe.resume(window.id, FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME + timedelta(hours=2))
+
+        with pe._core.transaction() as tx:
+            rows = tx.fetch_all("SELECT * FROM domain_events WHERE event_type = 'freeze_periods.closed'")
+        assert len(rows) == 2
+
+    def test_resuming_one_reason_does_not_touch_a_different_still_open_reason(
+        self, pe: PenaltyEngine, tm: TrustManager,
+    ) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        pe.freeze(window.id, FreezeReason.TEMPORARY_WEAR_EXEMPTION, exemption_id="ex-1", now=FIXED_TIME + timedelta(hours=1))
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1, minutes=1))
+        pe.emergency_freeze(window.id, now=FIXED_TIME + timedelta(hours=1, minutes=2))
+
+        pe.resume(window.id, FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME + timedelta(hours=2))
+
+        state = pe.get_active_or_frozen_penalty_window()
+        assert state.status == PenaltyWindowStatus.FROZEN  # the exemption reason is still open
+
+    def test_resume_with_nothing_open_is_a_harmless_no_op(self, pe: PenaltyEngine, tm: TrustManager) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        pe.resume(window.id, FreezeReason.EMERGENCY_OVERRIDE, now=FIXED_TIME + timedelta(hours=1))
+        state = pe.get_active_or_frozen_penalty_window()
+        assert state.status == PenaltyWindowStatus.ACTIVE
+
+
 class TestExpiringFreeze:
     def test_freeze_with_expires_at_closes_automatically(self, pe: PenaltyEngine, tm: TrustManager) -> None:
         _confirm_incident(tm)
