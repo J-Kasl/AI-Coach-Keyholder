@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**374 passing tests** across the whole repository (`pytest`), including
+**435 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -95,21 +95,40 @@ the hard rule migrations must follow (never destructive to user data).
 12. ~~Focused architectural review + fixes (task-transition guards, `resume()` closing all matching freezes, Recovery Credit idempotency)~~ **done (Phase 2.8)**
 13. ~~Goal Management (lifecycle, evidence, evaluation, the `GoalChangeProposal` confirmation mechanism)~~ **done (Phase 2.9)**
 14. ~~First usable vertical slice: `application/` + a thin Discord adapter~~ **done (Phase 3.1)**
+15. ~~Plugin Infrastructure, Step 1: `plugin_sdk.py` + `plugin_fault_boundary.py`, zero real plugins yet~~ **done**
+16. ~~Plugin Infrastructure, Step 2: `plugin_registry.py` (discovery, manifest validation, wiring into `ConsumerRegistry`/`CommandRouter`), zero real plugins yet~~ **done**
+17. ~~Plugin Infrastructure, Step 3: `plugins/goal_celebration`, the first real plugin, plus `plugin_migrations.py`~~ **done**
 
-**Next up:** undecided — the project is deliberately pausing new
-architecture and new modules to gather real usage experience over
-Discord first (see "Recent architecture proposals" below). The next
-priority (Relationship Engine implementation, AI Identity
-implementation, onboarding, or something else) will be chosen based on
-that experience, not decided in advance.
+**Next up:** transaction-aware SDK read methods (`plugin_architecture_proposal.md`
+v1.5 Section 26 Open Question 6 — direction decided, not yet built) as
+its own small infrastructure step, then Memory System Phase 1 (schema
++ repositories), per `memory_system_technical_design.md` v1.4.
 
-### Recent architecture proposals (not yet approved for implementation)
+### Architecture documents
 
-Two draft architecture documents exist, both explicitly marked **draft,
-not approved for implementation** in their own headers — read them as
-proposals to be validated against real usage, not as a queue of what
-gets built next:
+Four exist in `docs/architecture/` beyond the original nine-document
+baseline, at two different stages — check each document's own header
+for its authoritative status, not this list:
 
+**Approved, implementation underway:**
+- [`docs/architecture/memory_system_technical_design.md`](docs/architecture/memory_system_technical_design.md)
+  (v1.4) — the five memory layers (Working/Episodic/Semantic/
+  Relationship/Decision), a single-source-of-truth table per
+  information category, and an explicit ownership model distinguishing
+  "where the truth lives" from "who may change it." Implementation not
+  yet started (queued after Plugin Infrastructure — see "Next up").
+- [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
+  (v1.5) — plugins reuse the existing `ConsumerRegistry`/`CommandRouter`
+  rather than introducing a second event bus; a structural (not
+  convention-based) capability model where an undeclared read
+  capability's method is never bound onto a plugin's SDK object at all.
+  Implementation Steps 1-3 (`plugin_sdk.py`, `plugin_fault_boundary.py`,
+  `plugin_registry.py`, `plugin_migrations.py`, and the first real
+  plugin, `plugins/goal_celebration`) are done — see
+  `infrastructure/README.md`.
+
+**Draft, not yet approved for implementation** — read as proposals to
+be validated against real usage, not a queue of what gets built next:
 - [`docs/architecture/relationship_decision_engine_technical_design.md`](docs/architecture/relationship_decision_engine_technical_design.md)
   (v1.1) — how Domain State becomes one unified `Decision`, via a
   Relationship Engine (Coach/Keyholder as two interpretive perspectives,
@@ -220,7 +239,8 @@ core/            # coach_engine, keyholder_engine, decision_engine, config (busi
 ai/              # ollama_client, personality, analysis (Phase 1+)
 database/        # models.py, database.py, migrations/
 infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
-                 # Consumer Registry, Startup Lease)
+                 # Consumer Registry, Startup Lease, Plugin SDK/Fault
+                 # Boundary -- see infrastructure/README.md)
 trust_manager/   # first domain module (Slice 1+2 -- see trust_manager/README.md)
 penalty_engine/  # second domain module (Slice 1 + Extension + Recovery Credit -- see penalty_engine/README.md)
 recovery_plan/   # third domain module (see recovery_plan/README.md)
@@ -229,6 +249,8 @@ goal_management/ # fourth domain module, first independent of the Trust
                  # (see goal_management/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, CommandRouter, ApplicationService (see application/README.md)
+plugins/         # first-party plugins, loaded by infrastructure/plugin_registry.py
+                 # (see plugin_architecture_proposal.md and infrastructure/README.md)
 system/          # composition layer: startup orchestrator, cross-module wiring (see system/README.md)
 docs/architecture/  # architecture baseline: system_state_machine.md,
                      # seven domain technical designs, implementation_conventions.md,

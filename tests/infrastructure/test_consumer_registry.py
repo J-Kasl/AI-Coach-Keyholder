@@ -71,7 +71,20 @@ class TestDispatch:
     def test_one_consumers_failure_does_not_block_another(self, db: Database) -> None:
         """Each consumer runs in its OWN transaction -- one failing must
         not prevent another, independent consumer from still processing
-        the same event."""
+        the same event.
+
+        Updated: this test used to lock in the opposite (fail-fast)
+        behavior as "current, simplest" -- that was itself the real gap
+        `plugin_architecture_proposal.md` Section 1's survey found while
+        designing plugin fault isolation (PLUG-6): a single consumer's
+        bug could abort every other registration for the same event,
+        and everything after it in the same `process_pending_events()`
+        call. Fixed in `dispatch()`'s own loop (not only for
+        plugin-registered handlers) -- there was never a real reason
+        for this to be fail-fast; consumer_a's own transaction still
+        rolls back correctly (`consume_event()`'s `apply_transition`
+        does that before `dispatch()`'s new except clause ever runs),
+        so this is not a correctness regression, only a resilience fix."""
         registry = ConsumerRegistry()
         calls: list[str] = []
 
@@ -84,12 +97,32 @@ class TestDispatch:
         _write_sample_event(db)
         claimed = claim_pending_events(db, claimant="p1", batch_size=10, now=FIXED_TIME, lease_duration=timedelta(minutes=5))
 
-        with pytest.raises(RuntimeError):
-            registry.dispatch(db, claimed[0], now=FIXED_TIME)
-        # consumer_b's registration comes after consumer_a's and never
-        # runs in this pass since dispatch() stops at the first
-        # exception -- this documents the current, simplest behavior
-        # (fail-fast) rather than silently swallowing consumer errors.
+        ran = registry.dispatch(db, claimed[0], now=FIXED_TIME)  # must not raise
+
+        assert calls == ["b"]  # consumer_b still ran despite consumer_a's failure
+        assert ran == 1  # only consumer_b counted as having actually run its effect
+
+    def test_a_failing_consumers_partial_write_still_rolls_back(self, db: Database) -> None:
+        """The correctness half of the fix above: dispatch() catching
+        the exception one level up must never mean a failing consumer's
+        own partial write gets committed anyway -- consume_event()'s
+        transaction has already rolled back by the time dispatch()'s
+        except clause runs at all."""
+        registry = ConsumerRegistry()
+
+        def failing_handler(tx, event) -> None:
+            tx.execute("INSERT INTO domain_events (id, event_type, source_module, payload_json, occurred_at, created_at, published_at) VALUES ('should-not-persist', 'x', 'x', '{}', ?, ?, NULL)", (FIXED_TIME.isoformat(), FIXED_TIME.isoformat()))
+            raise RuntimeError("boom after a partial write")
+
+        registry.register("test.thing_happened", "consumer_a", failing_handler)
+
+        _write_sample_event(db)
+        claimed = claim_pending_events(db, claimant="p1", batch_size=10, now=FIXED_TIME, lease_duration=timedelta(minutes=5))
+        registry.dispatch(db, claimed[0], now=FIXED_TIME)
+
+        with db.transaction() as tx:
+            row = tx.fetch_one("SELECT * FROM domain_events WHERE id = 'should-not-persist'")
+        assert row is None  # rolled back, never committed
 
 
 class TestProcessPendingEvents:

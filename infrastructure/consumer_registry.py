@@ -13,16 +13,35 @@ Contains no knowledge of any specific event type or module (Trust
 Manager, Penalty Engine, ...) -- the actual registrations (which
 consumer subscribes to which event_type with which handler) are wired
 by the composition layer (system/startup.py), not by this module.
+
+Per-registration exception boundary (added while implementing
+plugin_architecture_proposal.md's PluginRegistry, Step 2): a real gap
+identified in that document's own Section 1 survey -- an unhandled
+exception from one registration's handler used to propagate straight
+through this loop, capable of aborting every other registration for
+the same event, and everything after it in the same
+`process_pending_events()` call. Fixed here for every registration,
+first-party and plugin alike, not only plugins -- there was never a
+reason for one consumer's bug to take down unrelated ones, and the
+fix is a small, additive log-and-continue, not a behavior change any
+existing consumer depends on. The exception is still allowed to
+propagate out of `consume_event()`'s own transaction context manager
+first (so a partial write still rolls back and `mark_processed()`
+never runs for a failed handler) -- only caught here, one level up,
+after that transaction has already safely closed.
 """
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable
 
 from infrastructure.database import Database, Transaction
 from infrastructure.outbox import ClaimedDomainEvent, claim_pending_events, consume_event, mark_published
+
+logger = logging.getLogger("ai_coach_keyholder.consumer_registry")
 
 __all__ = ["ConsumerRegistry", "process_pending_events"]
 
@@ -72,11 +91,26 @@ class ConsumerRegistry:
         registrations = self._registrations.get(event.event_type, [])
         ran = 0
         for reg in registrations:
-            did_run = consume_event(
-                db, event, consumer_name=reg.consumer_name,
-                handler=lambda tx, _reg=reg: _reg.handler(tx, event),
-                now=now,
-            )
+            try:
+                did_run = consume_event(
+                    db, event, consumer_name=reg.consumer_name,
+                    handler=lambda tx, _reg=reg: _reg.handler(tx, event),
+                    now=now,
+                )
+            except Exception:
+                # The transaction consume_event() opened has already
+                # rolled back by this point (Python's `with` runs
+                # __exit__, and therefore the rollback, during unwind,
+                # before this except clause ever runs) -- mark_processed()
+                # never ran for this registration, so a legitimate retry
+                # remains possible later. Caught here only to keep this
+                # one registration's failure from aborting every other
+                # registration for this event (see the module docstring).
+                logger.exception(
+                    "Consumer %r failed handling event_type=%r (event_id=%r) -- continuing with remaining registrations.",
+                    reg.consumer_name, event.event_type, event.id,
+                )
+                continue
             if did_run:
                 ran += 1
         return ran

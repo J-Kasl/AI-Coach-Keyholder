@@ -252,6 +252,219 @@ pattern stays visible for any future, deliberately-documented exception.
   phase's `Clock`/`Database`/`Transaction`/`Outbox` design assumes
   anything about it, so no conflict exists either way.
 
+## Why `infrastructure.plugin_sdk`/`plugin_fault_boundary`/`plugin_models` exist (Phase: Plugin Infrastructure Step 1)
+
+Canonical: `docs/architecture/plugin_architecture_proposal.md` v1.1.
+**This is Step 1 of that document's own recommended implementation
+order (Section 27): `plugin_sdk.py` + `plugin_fault_boundary.py`,
+tested in isolation, with zero real plugins yet.** `PluginRegistry`
+(discovery, manifest validation, wiring into the *existing*
+`ConsumerRegistry`/`CommandRouter`) is Step 2, not built here.
+
+- **`plugin_models.py`** — `PluginManifest`, deliberately with no
+  `depends_on_plugins`/`optional_plugins`/`conflicts_with`/`load_after`
+  field (PLUG-9) — checked directly by
+  `tests/infrastructure/test_plugin_models.py::TestPluginManifestDefaults::test_has_no_dependency_fields`,
+  not merely asserted in prose. `__post_init__` enforces PLUG-2 (a
+  plugin's declared `publishes_event_types` must all be namespaced
+  under its own name) and Decision 8 (`trust_tier` must be
+  `'first_party'` in the MVP) at construction time — the earliest
+  possible point.
+- **`plugin_sdk.py`** — `PluginSDK`/`build_plugin_sdk()`. PLUG-5's
+  actual mechanism: a read method for a domain module (e.g. `get_goal`)
+  is only ever bound onto an SDK instance if the plugin's manifest
+  declared the corresponding capability (`'goal_management.read'`, ...)
+  — an undeclared capability means `hasattr(sdk, 'get_goal')` is
+  `False`, not merely "raises if you try." Read methods delegate
+  directly to each domain module's own already-public methods (nothing
+  re-implemented, nothing narrower or broader than what every other
+  consumer in this system already gets). `publish_event()` enforces
+  PLUG-2 a second time, at actual call time — a manifest passing
+  `__post_init__`'s check says nothing about what a plugin's code might
+  construct as an `event_type` string at runtime.
+- **`plugin_fault_boundary.py`** — `PluginFaultBoundary`. PLUG-6: every
+  call is wrapped in a `try/except` that never propagates. PLUG-7
+  (**renamed in v1.2, after review caught that v1.1's naming
+  overstated what it does**): an **execution budget**, not a timeout —
+  every call is measured, and one exceeding
+  `execution_budget_seconds` is logged and counted toward the failure
+  threshold once it returns, but the handler is never interrupted. A
+  genuinely hung (infinite-loop) synchronous handler will hang the
+  call, and its caller, indefinitely — a real, current, and explicitly
+  documented limitation, not something the old `timeout_seconds`/
+  `exceeded_timeout` naming should have implied was solved. **A real
+  implementation-time finding, not assumed away:** a
+  thread-with-join-timeout approach (which would have provided a true
+  hard timeout) was considered and rejected, because
+  `infrastructure/database.py` opens its `sqlite3` connection without
+  `check_same_thread=False` — a handler touching the shared
+  `core.transaction()` from a different thread than the one that
+  opened the connection would raise `sqlite3.ProgrammingError`, a real
+  bug given a plugin's whole point is to be able to touch the database
+  (PLUG-5). `plugin_architecture_proposal.md` Section 26's Open
+  Question 4 (a genuine hard timeout) remains open, not resolved by
+  this module — it would need a fully asynchronous handler contract
+  with cooperative cancellation, a separate process, or another truly
+  preemptible execution boundary. A per-plugin rolling failure-count
+  circuit breaker (Decision 5) auto-disables a plugin after repeated
+  failures within a time window — verified independent per plugin
+  (`TestDecision5CircuitBreaker::test_a_failure_in_one_plugin_never_affects_another`).
+
+**A second real finding, surfaced while building Step 1 (already
+documented in the design doc's own Section 1, confirmed here by
+reading the actual code, not assumed):** `ConsumerRegistry.dispatch()`
+gave every consumer its own transaction, but had no exception boundary
+at all — an unhandled exception from any handler still propagated
+straight through `dispatch()` and `process_pending_events()`. **Fixed
+in Step 2, for every consumer, not only plugins** — see below.
+
+## Why `infrastructure.plugin_registry` exists (Phase: Plugin Infrastructure Step 2)
+
+Canonical: `docs/architecture/plugin_architecture_proposal.md` v1.3
+Section 27. `PluginRegistry` discovers, validates, and loads
+first-party plugins, wiring their handlers into the *same*
+`ConsumerRegistry`/`CommandRouter` Step 1 already reused rather than
+replaced. Deliberately out of scope, per its own design document and
+explicit review guidance before this Step began: no startup
+integration, no plugin migrations, no real plugin (`goal_celebration`
+is a later, separate step) — proven entirely against synthetic,
+`tmp_path`-constructed plugin directories
+(`tests/infrastructure/test_plugin_registry.py`).
+
+- **Discovery (PLUG-9)** — `discover()` lists every subdirectory of
+  `plugins/` containing a `manifest.py`, sorted alphabetically. No
+  dependency resolution, matching Decision 9's MVP scope exactly.
+- **Manifest loading, then compatibility validation, before the
+  plugin's own implementation is ever imported (Decision 6)** —
+  `load_manifest()` imports only `<plugin>/manifest.py`;
+  `validate_compatibility()` checks `trust_tier == 'first_party'`
+  (Decision 8) and the manifest's declared `min_core_version`/
+  `max_core_version` against a running `CORE_VERSION` constant (itself
+  `BOOTSTRAP_DEFAULT`-tagged — how this should actually be maintained
+  long-term is undecided). Only a *compatible* manifest's
+  `<plugin>/handlers.py` is ever imported — an incompatible or
+  malformed plugin's implementation code never runs at all.
+- **`load()` builds the per-plugin `PluginSDK`
+  (`build_plugin_sdk()`, Step 1) and one `PluginFaultBoundary` per
+  plugin**, then wires whatever the manifest declared into the
+  existing registries. `load_all()` never lets one plugin's failure,
+  at any stage, prevent another's — every failure becomes a
+  `PluginLoadFailure` in a returned list, never a raised exception.
+
+**Two real, structural findings from this Step, both resolved
+consistently with prior findings rather than patched around:**
+
+1. **`PluginSDK` originally stored `core` as `self._core`** —
+   trivially reachable as `sdk._core` despite the underscore, silently
+   defeating PLUG-1/PLUG-5 for any plugin regardless of what its
+   manifest declared. Fixed: `publish_event` is now bound as a closure
+   over `core` in `build_plugin_sdk()`, never a stored attribute —
+   `core` lives only in that closure's own cell. Verified directly
+   (`TestNoRawDatabaseAccess`), not merely asserted. Documented
+   honestly in `PluginSDK`'s own class docstring that this raises the
+   bar sharply but is not literally unbreakable (Python still permits
+   `sdk.publish_event.__closure__` introspection) — first-party trust
+   (code review + PLUG-4's automated import-boundary test) is what
+   actually covers that gap; genuine tamper-proof isolation stays
+   third-party's deferred problem, now with an explicit line in
+   `plugin_architecture_proposal.md` Section 18 recording why:
+   **Python language-level encapsulation is not considered a security
+   boundary.**
+2. **`ConsumerRegistry.dispatch()`'s own loop had no exception boundary
+   at all** (Step 1's own flagged finding, resolved here). Fixed with a
+   small, additive `try`/`except` per registration — benefiting every
+   consumer, first-party included, not only plugins, since there was
+   never a real reason for one consumer's bug to abort every other
+   registration for the same event. Correctness was the delicate part:
+   a plugin's registered handler still needs its *own* transaction
+   (opened by `consume_event()`) to roll back correctly on failure, so
+   `PluginRegistry`'s event-consumer wrapper calls `PluginFaultBoundary`
+   for its tracking/circuit-breaker effect but then **re-raises** on
+   failure — letting the real exception reach the transaction boundary
+   (rollback happens, `mark_processed()` never runs) before
+   `dispatch()`'s new `except` catches it one level up. A plugin's
+   *command* handler wrapper, with no such enclosing transaction to
+   protect, safely swallows a failure outright instead. Both paths are
+   tested directly:
+   `test_a_failing_consumers_partial_write_still_rolls_back` (rollback
+   correctness) and
+   `test_a_failing_event_consumer_does_not_crash_load_all_or_other_plugins`
+   (isolation).
+
+## Why `plugins/goal_celebration` exists (Phase: Plugin Infrastructure Step 3)
+
+Canonical: `docs/architecture/plugin_architecture_proposal.md` v1.5
+Section 20/27. The first real plugin — proves the whole Step 1/2
+design holds together against a genuine, already-published event
+(`goal.completed`, `goal_management`), not synthetic test fixtures.
+Read-only via `sdk` (`goal_management.read`), owns exactly one table
+(`goal_celebration_log`, for idempotency), publishes its own namespaced
+event (`plugin_goal_celebration.sent`).
+
+**Introduced `infrastructure/plugin_migrations.py`** —
+`apply_plugin_migrations()`, the plugin-scoped equivalent of
+`database.database.Database.migrate()`, tracked in a new core table
+(`plugin_schema_versions`, migration 012) instead of core's own
+`schema_version`. Mirrors that function's logic deliberately closely
+(same `executescript()`-per-file approach, same reliance on each
+migration's own seed `INSERT`) — resolves
+`plugin_architecture_proposal.md`'s own former Open Question 2.
+
+**Introduced the "table-owning plugin" trust boundary** —
+`manifest.owns_tables=True` plugins get a `<plugin>/repository.py`
+exposing `build_repository(core) -> Any`, given `core` directly
+(unlike `PluginSDK`, which never is). Documented honestly in
+`infrastructure/plugin_registry.py`'s own docstring ("Table ownership
+and the trust boundary this implies") as a real, deliberate exception:
+nothing stops a careless or malicious `owns_tables=True` plugin's own
+`repository.py` from touching another module's tables too — PLUG-1's
+enforcement for this specific path relies entirely on first-party
+trust (code review), same as it always has for any domain module's own
+use of `core`.
+
+**Three real `NestedTransactionError` findings, all the same bug
+class, found by writing and running this plugin's own tests — not
+theorized:**
+
+1. A first draft's `has_been_celebrated()` (a read) opened its own
+   transaction from inside the event consumer handler, which already
+   runs inside `consume_event()`'s transaction. Fixed:
+   `has_been_celebrated_in_transaction(tx, ...)`, taking the handler's
+   own already-open `tx` — no read-side transaction of its own at all
+   (the whole class is now stateless; see its own docstring).
+2. The same bug, on the write/publish side: an early draft called
+   `sdk.publish_event()` (which opens its own transaction) from inside
+   the same handler. Fixed by using the already-existing
+   `sdk.publish_event_in_transaction(tx, ...)` (Step 2) instead — this
+   plugin is the first real caller of that method, not only a
+   synthetic test.
+3. **A third, more general instance, not fully resolved in this Step:**
+   `sdk.get_goal(goal_group_id)` — any `PluginSDK` read capability —
+   delegates directly to a domain module's own public getter, which
+   *also* always opens its own transaction. Every SDK read method has
+   this same problem when called from inside an event consumer
+   handler, not only `get_goal()`. `goal_celebration`'s own handler
+   avoids it by not needing a domain read at all (`event.payload`
+   already carries what it needs) — see its own docstring. **Decided
+   direction for the real fix** (v1.5, not yet built): explicit
+   `_in_transaction`-suffixed read variants mirroring
+   `publish_event`/`publish_event_in_transaction`, each domain module's
+   public getter split into a private tx-only implementation both
+   variants delegate to (so SQL/row-mapping is never duplicated) —
+   `plugin_architecture_proposal.md` Section 26 Open Question 6,
+   Section 27 step 5. Its own, separate infrastructure step; not a
+   blocker for anything already shipped.
+
+**PLUG-2 tightened (v1.4, found via a direct review question):**
+`publish_event()`/`publish_event_in_transaction()` originally checked
+only an event's namespace prefix (`plugin_<name>.*`), not membership in
+the plugin's own declared `manifest.publishes_event_types` — meaning a
+plugin could publish anything under its own namespace, not only what it
+declared upfront. Fixed: `publishes_event_types` is now a binding
+allowlist, the same "declare it or you can't reach it" discipline
+PLUG-5 already applies to read capabilities. Verified directly
+(`TestPublishEventAllowlist::test_publishing_an_undeclared_event_type_is_rejected_even_with_a_correct_namespace`).
+
 ## Usage
 
 ```python
