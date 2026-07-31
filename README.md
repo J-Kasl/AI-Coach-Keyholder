@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**435 passing tests** across the whole repository (`pytest`), including
+**450 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -70,14 +70,21 @@ every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
 form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
 in `trust_manager/README.md` and `penalty_engine/README.md`).
 
-Eleven sequential database migrations are applied so far
-(`database/migrations/001` through `011`), covering the initial Phase 0
+Thirteen sequential database migrations are applied so far
+(`database/migrations/001` through `013`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
-Recovery Plan, Recovery Credit, Goal Management, and the application
-layer's user identity bookkeeping. See
+Recovery Plan, Recovery Credit, Goal Management, the application
+layer's user identity bookkeeping, the plugin infrastructure's own
+scoped migration tracking, and (013) Discord onboarding/user
+preferences. See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
+
+**User-verified working on Windows with Python 3.14.6** (see the
+"Python version" note above) — the full suite, a real Discord Gateway
+connection, and an end-to-end DM session (including onboarding) have
+all been confirmed there.
 
 ### Implementation order so far
 
@@ -98,46 +105,54 @@ the hard rule migrations must follow (never destructive to user data).
 15. ~~Plugin Infrastructure, Step 1: `plugin_sdk.py` + `plugin_fault_boundary.py`, zero real plugins yet~~ **done**
 16. ~~Plugin Infrastructure, Step 2: `plugin_registry.py` (discovery, manifest validation, wiring into `ConsumerRegistry`/`CommandRouter`), zero real plugins yet~~ **done**
 17. ~~Plugin Infrastructure, Step 3: `plugins/goal_celebration`, the first real plugin, plus `plugin_migrations.py`~~ **done**
+18. ~~Discord onboarding + persistent user preferences: language → AI gender → personality, the 15-identity catalog as approved reference data, `windows/` Task Scheduler deployment~~ **done** — see `docs/architecture/user_onboarding_technical_design.md`.
 
-**Next up:** transaction-aware SDK read methods (`plugin_architecture_proposal.md`
-v1.5 Section 26 Open Question 6 — direction decided, not yet built) as
-its own small infrastructure step, then Memory System Phase 1 (schema
-+ repositories), per `memory_system_technical_design.md` v1.4.
+### Roadmap — three explicitly separate tiers
 
-### Architecture documents
+Reflecting a real correction: an earlier revision of this README listed
+`memory_system_technical_design.md` under "approved" despite that
+document's own header saying the opposite, and undercounted the
+migration total by two. Both are fixed here, and this section now
+keeps three tiers visibly distinct so that mistake doesn't recur
+silently:
 
-Four exist in `docs/architecture/` beyond the original nine-document
-baseline, at two different stages — check each document's own header
-for its authoritative status, not this list:
+**1. Just implemented (this revision):** Discord onboarding and
+persistent user preferences (`docs/architecture/user_onboarding_technical_design.md`,
+approved and implemented in full — item 18 above).
 
-**Approved, implementation underway:**
+**2. Approved, but deliberately deferred:** transaction-aware SDK read
+methods (`plugin_architecture_proposal.md` v1.5 Section 26 Open
+Question 6 — the direction is decided, the implementation is not yet
+built; still not started).
+
+**3. Drafts awaiting their own separate approval — not a queue of
+what gets built next:**
 - [`docs/architecture/memory_system_technical_design.md`](docs/architecture/memory_system_technical_design.md)
-  (v1.4) — the five memory layers (Working/Episodic/Semantic/
-  Relationship/Decision), a single-source-of-truth table per
-  information category, and an explicit ownership model distinguishing
-  "where the truth lives" from "who may change it." Implementation not
-  yet started (queued after Plugin Infrastructure — see "Next up").
-- [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
-  (v1.5) — plugins reuse the existing `ConsumerRegistry`/`CommandRouter`
-  rather than introducing a second event bus; a structural (not
-  convention-based) capability model where an undeclared read
-  capability's method is never bound onto a plugin's SDK object at all.
-  Implementation Steps 1-3 (`plugin_sdk.py`, `plugin_fault_boundary.py`,
-  `plugin_registry.py`, `plugin_migrations.py`, and the first real
-  plugin, `plugins/goal_celebration`) are done — see
-  `infrastructure/README.md`.
-
-**Draft, not yet approved for implementation** — read as proposals to
-be validated against real usage, not a queue of what gets built next:
+  (v1.4) — **draft, NOT approved for implementation** (its own header
+  says so; this README previously, incorrectly, listed it as approved
+  — corrected here). The five memory layers, a single-source-of-truth
+  table per information category, an explicit ownership model.
+  Implementation not started, and not queued, pending a dedicated
+  review/approval step.
 - [`docs/architecture/relationship_decision_engine_technical_design.md`](docs/architecture/relationship_decision_engine_technical_design.md)
-  (v1.1) — how Domain State becomes one unified `Decision`, via a
-  Relationship Engine (Coach/Keyholder as two interpretive perspectives,
-  not two independent agents) and a Decision Engine (Entitlement
-  Classes, the Hidden Token Economy).
+  (v1.1) — **draft, NOT approved for implementation.** How Domain
+  State becomes one unified `Decision`, via a Relationship Engine
+  (Coach/Keyholder as two interpretive perspectives, not two
+  independent agents) and a Decision Engine (Entitlement Classes, the
+  Hidden Token Economy).
 - [`docs/architecture/ai_identity_technical_design.md`](docs/architecture/ai_identity_technical_design.md)
-  (v1.0) — the communication layer that phrases an already-final
-  `Decision` in one of fifteen selectable identities' voice, without
-  ever being able to change what was decided.
+  (v1.0) — **draft, NOT approved for implementation**, *except* for
+  Sections 3 and 10 specifically, which `user_onboarding_technical_design.md`
+  cites as approved, stable reference data (the 15-identity catalog
+  and the six communication-profile values) — the communication
+  pipeline itself (phrasing a `Decision` in an identity's voice) is
+  still fully unapproved.
+
+**Already approved and implemented, not drafts:**
+[`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
+(v1.5, Steps 1–3 done — see `infrastructure/README.md`) and
+[`docs/architecture/user_onboarding_technical_design.md`](docs/architecture/user_onboarding_technical_design.md)
+(v1.0, done in full — see its own Section 9).
 
 `philosophy.md` v1.16 already reflects one decision from this line of
 work (Section 4.2: the Hidden Token Economy replaces an earlier,
@@ -185,8 +200,19 @@ daily limit, pre-migration backups, and rotation).
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate        # Windows
+.venv\Scripts\activate        # Windows (cmd/PowerShell)
 pip install -r requirements.txt
+```
+
+On Windows, if `python`/`pip` aren't the ones you want on `PATH` (or
+you have multiple Python versions installed), the
+[`py` launcher](https://docs.python.org/3/using/windows.html#launcher)
+is the more reliable choice and works identically:
+
+```bat
+py -m venv .venv
+.venv\Scripts\activate
+py -m pip install -r requirements.txt
 ```
 
 For development and running tests:
@@ -196,8 +222,36 @@ pip install -r requirements-dev.txt
 pytest
 ```
 
-Requires Python 3.13 (the code uses `enum.StrEnum` and modern typing --
-it would work on 3.11+, but 3.13 is the agreed target).
+```bat
+:: Windows, via the py launcher
+py -m pip install -r requirements-dev.txt
+py -m pytest
+```
+
+**Python version:** developed against 3.13 (the code uses
+`enum.StrEnum` and modern typing — it would work on 3.11+, but 3.13
+was the original agreed target). **User-verified working on Windows
+with Python 3.14.6** (`discord.py==2.7.1`, full test suite —
+435 passed — and a real end-to-end Discord DM session, all confirmed
+by the person running this project; not independently re-verified in
+this sandbox, which only has 3.12.3 available). No code change was
+needed for 3.14 support — `enum.StrEnum`/modern typing are unaffected,
+and `discord.py`'s own `audioop`-removal workaround (Python 3.13+
+removed the `audioop` stdlib module entirely, PEP 594) is handled
+internally by `discord.py>=2.7.1` itself via a conditional dependency
+on `audioop-lts` — nothing this project's own `requirements.txt` needs
+to add explicitly. If you hit an `audioop`-related `ModuleNotFoundError`
+regardless, `pip install audioop-lts` resolves it (its `cp313-abi3`
+wheel works on 3.13 and 3.14 both, via Python's stable ABI).
+
+**No CI currently exists in this repository** (no `.github/workflows/`
+or equivalent) — noted here rather than silently added, since setting
+one up is a real, separate decision, not a side effect of a Python
+version bump. If/when one is added, it should exercise both the
+declared floor (3.11, where `enum.StrEnum` first exists) and the
+current target (3.14) — not only whichever version a contributor
+happens to have installed locally — so a change that accidentally
+breaks compatibility with the floor is caught before it ships.
 
 ## Configuration
 
@@ -217,14 +271,24 @@ it the bot won't see message content -- `discord_bot.py` relies on it).
 python -m bot.discord_bot
 ```
 
+```bat
+:: Windows, via the py launcher
+py -m bot.discord_bot
+```
+
 On first run, `data/coach_keyholder.db` is created automatically,
 migrations are applied, and `on_system_startup()` runs (Trust Manager/
 Penalty Engine/Recovery Plan/Goal Management recovery, then the outbox
 publisher) before the bot connects to Discord.
 
-Send the bot a direct message. Two commands are supported so far:
-`help` (lists commands) and `status` (reports the current Penalty
-Window, if any — a real read against real domain state). Anything else
+Send the bot a direct message. **A brand-new user is walked through
+onboarding first** (language → AI voice → personality — see
+[`docs/architecture/user_onboarding_technical_design.md`](docs/architecture/user_onboarding_technical_design.md)),
+resuming automatically from wherever they left off if the bot restarts
+mid-onboarding. Once that's done, three commands are supported:
+`help` (lists commands), `status` (reports the current Penalty
+Window, if any — a real read against real domain state), and
+`preferences` (shows your saved onboarding choices). Anything else
 gets a polite "I don't recognize that yet." Only DMs are processed;
 messages in a server channel are ignored. See
 [`application/README.md`](application/README.md) for the full
@@ -232,11 +296,17 @@ boundary between the Discord adapter and the channel-agnostic
 application layer underneath it, and what's deliberately not built
 yet (no Coach/Keyholder reasoning, no LLM, no write-capable commands).
 
+**Want the bot to start automatically on Windows** instead of running
+it manually every time? See [`windows/README.md`](windows/README.md)
+for Task Scheduler setup (optional, not required for development).
+
 ## Structure
 
 ```
 core/            # coach_engine, keyholder_engine, decision_engine, config (business logic -- Phase 1+)
-ai/              # ollama_client, personality, analysis (Phase 1+)
+ai/              # identity_catalog.py (the 15-identity reference catalog for onboarding --
+                 # see docs/architecture/user_onboarding_technical_design.md); everything else
+                 # here (ollama_client, the actual communication pipeline) remains Phase 1+
 database/        # models.py, database.py, migrations/
 infrastructure/  # shared cross-cutting layer (Clock, Database, Outbox,
                  # Consumer Registry, Startup Lease, Plugin SDK/Fault
@@ -248,9 +318,12 @@ goal_management/ # fourth domain module, first independent of the Trust
                  # Manager -> Penalty Engine -> Recovery Plan branch
                  # (see goal_management/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
-                 # UserService, CommandRouter, ApplicationService (see application/README.md)
+                 # UserService, OnboardingService, CommandRouter, ApplicationService
+                 # (see application/README.md)
 plugins/         # first-party plugins, loaded by infrastructure/plugin_registry.py
                  # (see plugin_architecture_proposal.md and infrastructure/README.md)
+windows/         # Task Scheduler deployment for a personal Windows install
+                 # (see windows/README.md) -- entirely optional, not needed to run the bot manually
 system/          # composition layer: startup orchestrator, cross-module wiring (see system/README.md)
 docs/architecture/  # architecture baseline: system_state_machine.md,
                      # seven domain technical designs, implementation_conventions.md,

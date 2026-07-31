@@ -37,16 +37,31 @@ def _incoming(text: str, *, external_user_id: str = "42", now: datetime = FIXED_
     return IncomingMessage(channel="discord", external_user_id=external_user_id, text=text, received_at=now)
 
 
+def _complete_onboarding(service: ApplicationService, *, external_user_id: str = "42", now: datetime = FIXED_TIME) -> None:
+    """Drives a fresh user through all three onboarding steps so a
+    test can then exercise ordinary command behavior -- every test in
+    this module that predates onboarding assumed a fresh user reached
+    the command router immediately; onboarding now intercepts first,
+    so those tests need a user who has already finished it."""
+    service.handle_message(_incoming("anything", external_user_id=external_user_id, now=now))  # first contact -> language prompt
+    service.handle_message(_incoming("english", external_user_id=external_user_id, now=now))     # -> ai_gender prompt
+    service.handle_message(_incoming("neutral", external_user_id=external_user_id, now=now))       # -> personality prompt
+    service.handle_message(_incoming("alex", external_user_id=external_user_id, now=now))            # -> complete
+
+
 class TestHandleMessageBasics:
     def test_help_command_returns_command_list(self, service: ApplicationService) -> None:
+        _complete_onboarding(service)
         result = service.handle_message(_incoming("help"))
         assert "status" in result.text.lower()
 
     def test_unrecognized_text_gives_safe_fallback(self, service: ApplicationService) -> None:
+        _complete_onboarding(service)
         result = service.handle_message(_incoming("blah blah blah"))
         assert "help" in result.text.lower()
 
     def test_status_with_no_active_window(self, service: ApplicationService) -> None:
+        _complete_onboarding(service)
         result = service.handle_message(_incoming("status"))
         assert "no active penalty window" in result.text.lower()
 
@@ -64,6 +79,7 @@ class TestHandleMessageEndToEndWithRealDomainState:
     a real domain module's public read API -> a real answer, not a mock."""
 
     def test_status_reports_a_real_active_penalty_window(self, service: ApplicationService, core: CoreDatabase) -> None:
+        _complete_onboarding(service)
         from trust_manager.models import (
             BreachDirectness, ConfirmationSource, EvidenceConfidenceLevel, ImpactLevel,
             IncidentConfirmation, IncidentEvidence, IntentAssessment, RepetitionEvidence,
@@ -94,6 +110,8 @@ class TestHandleMessageEndToEndWithRealDomainState:
 
 class TestHandleMessageNeverRaises:
     def test_handle_message_swallows_unexpected_exceptions(self, service: ApplicationService, monkeypatch) -> None:
+        _complete_onboarding(service)
+
         def boom(*args, **kwargs):
             raise RuntimeError("simulated failure")
 

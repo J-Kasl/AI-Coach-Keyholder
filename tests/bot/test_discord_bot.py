@@ -83,6 +83,16 @@ def _fake_guild_message(content: str) -> Mock:
     return message
 
 
+def _complete_onboarding(bot, *, author_id: int = 12345) -> None:
+    """Drives a fresh user through all three onboarding steps via the
+    real bot.on_message() path -- every TestMessageFlow/
+    TestAdapterLevelErrorHandling test predates onboarding and assumed
+    a fresh user reached the command router immediately; onboarding
+    now intercepts first."""
+    for i, text in enumerate(["anything", "english", "neutral", "alex"]):
+        _run(bot.on_message(_fake_dm_message(text, author_id=author_id, message_id=100 + i)))
+
+
 class TestDMFiltering:
     def test_dm_messages_get_a_reply(self, bot) -> None:
         message = _fake_dm_message("help")
@@ -108,12 +118,14 @@ class TestDMFiltering:
 
 class TestMessageFlow:
     def test_help_command_reaches_the_application_service_and_replies(self, bot) -> None:
+        _complete_onboarding(bot)
         message = _fake_dm_message("help")
         _run(bot.on_message(message))
         reply_text = message.channel.send.call_args[0][0]
         assert "status" in reply_text.lower()
 
     def test_status_command_reaches_a_real_domain_module(self, bot) -> None:
+        _complete_onboarding(bot)
         message = _fake_dm_message("status")
         _run(bot.on_message(message))
         reply_text = message.channel.send.call_args[0][0]
@@ -136,6 +148,7 @@ class TestAdapterLevelErrorHandling:
         writing this test: the first implementation coupled the two,
         so a logging failure produced the generic error instead of the
         real 'help' response)."""
+        _complete_onboarding(bot)
         message = _fake_dm_message("help")
         bot.db.save_conversation_message = Mock(side_effect=RuntimeError("simulated DB failure"))
 
@@ -157,3 +170,43 @@ class TestAdapterLevelErrorHandling:
         reply_text = message.channel.send.call_args[0][0]
         assert "went wrong" in reply_text.lower()
         assert "RuntimeError" not in reply_text  # never leaks internals to the user
+
+    def test_a_discord_send_failure_does_not_corrupt_onboarding_state(self, bot, core: CoreDatabase) -> None:
+        """The onboarding write always happens before send() is even
+        attempted (application/onboarding_service.py's own write-
+        before-send discipline) -- a failure sending the confirmation
+        must never leave the persisted onboarding_step out of sync
+        with what was actually processed."""
+        # First message (creates the row at LANGUAGE, shows the prompt) -- must succeed normally.
+        _run(bot.on_message(_fake_dm_message("anything", author_id=555, message_id=1)))
+
+        # Second message answers LANGUAGE -- simulate Discord itself
+        # failing to deliver the AI_GENDER prompt that should follow.
+        failing_message = _fake_dm_message("english", author_id=555, message_id=2)
+        failing_message.channel.send = AsyncMock(side_effect=RuntimeError("simulated Discord API failure"))
+
+        _run(bot.on_message(failing_message))  # must not raise -- send() is wrapped
+
+        with core.transaction() as tx:
+            row = tx.fetch_one(
+                "SELECT up.* FROM user_preferences up "
+                "JOIN user_channel_identities uci ON uci.user_account_id = up.user_id "
+                "WHERE uci.external_id = '555'"
+            )
+        assert row["onboarding_step"] == "ai_gender"  # the write succeeded despite the failed send
+        assert row["language"] == "en"
+
+    def test_no_discord_token_appears_in_any_error_reply(self, bot, monkeypatch) -> None:
+        """A generic failure's reply text must never echo configuration
+        (e.g. the bot's own token, however that failure was triggered)."""
+        message = _fake_dm_message("help")
+
+        def boom(*args, **kwargs):
+            raise RuntimeError(f"failed using token={bot.config.discord_token}")
+
+        monkeypatch.setattr(bot.application_service, "handle_message", boom)
+        _run(bot.on_message(message))
+
+        reply_text = message.channel.send.call_args[0][0]
+        assert bot.config.discord_token not in reply_text
+        assert "test-token" not in reply_text

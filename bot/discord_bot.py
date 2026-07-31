@@ -100,7 +100,22 @@ class CoachKeyholderBot(discord.Client):
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
             reply_text = "Something went wrong handling that. It's been logged."
 
-        sent = await message.channel.send(reply_text)
+        # Whatever state this reply reflects (including any onboarding
+        # step transition) was already written by handle_message()
+        # above -- write-before-send throughout
+        # application/onboarding_service.py specifically so a failure
+        # here can never leave persisted state inconsistent with what
+        # was (or wasn't) shown to the user. Wrapped, not left to
+        # propagate: a transient Discord API failure sending one reply
+        # is not a reason to let an unhandled exception surface through
+        # discord.py's own event dispatch -- the same "one bad message
+        # never crashes the bot" posture this file already applies to
+        # audit logging.
+        try:
+            sent = await message.channel.send(reply_text)
+        except Exception:
+            logger.exception("Failed to send a reply to user_id=%s -- persisted state is unaffected.", message.author.id)
+            return
 
         self._log_message_best_effort(self.clock.now(), MessageRole.ASSISTANT, reply_text, message.channel.id, sent.id)
 

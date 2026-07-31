@@ -21,7 +21,9 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from ai.identity_catalog import get_identity
 from application.models import IncomingMessage, OutgoingMessage
+from application.onboarding_service import OnboardingService
 from application.router import CommandRouter, RequestContext
 from application.user_service import UserService
 from goal_management.repository import GoalManager
@@ -40,6 +42,7 @@ class ApplicationService:
         self._core = core if core is not None else CoreDatabase(self.db_path)
 
         self.user_service = UserService(self.db_path, core=self._core)
+        self.onboarding_service = OnboardingService(self.db_path, core=self._core)
         self.trust_manager = TrustManager(self.db_path, core=self._core)
         self.penalty_engine = PenaltyEngine(self.db_path, core=self._core)
         self.recovery_plan = RecoveryPlanManager(self.db_path, core=self._core)
@@ -51,19 +54,41 @@ class ApplicationService:
     def handle_message(self, incoming: IncomingMessage) -> OutgoingMessage:
         """
         The single entry point every adapter calls. Never raises --
-        any exception from user resolution or routing is caught,
-        logged, and turned into a safe, generic reply. An adapter still
-        wraps its OWN call to this method in its own try/except too
-        (defense in depth, the same layering this project already uses
-        elsewhere -- e.g. `consume_event()`'s dedup plus
-        `UNIQUE(completion_id)` as a second, independent guard) in case
-        this method's own plumbing (e.g. opening the DB) fails before
-        any of this function's own code runs.
+        any exception from user resolution, onboarding, or routing is
+        caught, logged, and turned into a safe, generic reply. An
+        adapter still wraps its OWN call to this method in its own
+        try/except too (defense in depth, the same layering this
+        project already uses elsewhere -- e.g. `consume_event()`'s
+        dedup plus `UNIQUE(completion_id)` as a second, independent
+        guard) in case this method's own plumbing (e.g. opening the
+        DB) fails before any of this function's own code runs.
+
+        Onboarding (docs/architecture/user_onboarding_technical_design.md)
+        takes priority over normal command routing: an incomplete
+        user's message is always interpreted as an onboarding answer
+        (or shown the current onboarding prompt, for a brand-new user's
+        first-ever message), never matched against the command table --
+        a new user is never required to already know a command like
+        `help` before onboarding has even asked them anything.
         """
         try:
             user = self.user_service.get_or_create_user(
                 incoming.channel, incoming.external_user_id, now=incoming.received_at,
             )
+            preferences, was_created = self.onboarding_service.get_or_create_preferences(
+                user.id, now=incoming.received_at,
+            )
+
+            if was_created:
+                # A brand-new user's first-ever message is never itself
+                # treated as an answer -- they haven't been asked
+                # anything yet.
+                return self.onboarding_service.prompt_for(preferences)
+
+            if not self.onboarding_service.is_complete(preferences):
+                result = self.onboarding_service.process_message(preferences, incoming.text, now=incoming.received_at)
+                return result.reply
+
             context = RequestContext(user=user, now=incoming.received_at)
             return self.router.route(incoming.text, context)
         except Exception:
@@ -78,6 +103,7 @@ class ApplicationService:
     def _register_commands(self) -> None:
         self.router.register("help", "Show this list of commands", self._handle_help)
         self.router.register("status", "Show the current penalty window, if any", self._handle_status)
+        self.router.register("preferences", "Show your saved language/AI voice/personality choices", self._handle_preferences)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())
@@ -100,5 +126,28 @@ class ApplicationService:
             text=(
                 f"Penalty window: {window.status.value}\n"
                 f"~{remaining:.1f}h remaining of {target:.1f}h target."
+            ),
+        )
+
+    def _handle_preferences(self, ctx: RequestContext) -> OutgoingMessage:
+        """
+        Read-only. Only ever reachable once onboarding is complete
+        (handle_message() routes an incomplete user through onboarding
+        before this table is ever consulted) -- so `preferences` here
+        is guaranteed to have language/ai_gender/identity_id all set,
+        but this method re-checks rather than assuming, since a future
+        caller of this handler shouldn't have to know that invariant to
+        stay safe.
+        """
+        preferences, _was_created = self.onboarding_service.get_or_create_preferences(ctx.user.id, now=ctx.now)
+        if not self.onboarding_service.is_complete(preferences):
+            return OutgoingMessage(text="You haven't finished setup yet.")
+        entry = get_identity(preferences.identity_id) if preferences.identity_id else None
+        name = entry.display_name(preferences.language or "en") if entry else "(unknown)"
+        return OutgoingMessage(
+            text=(
+                f"Language: {preferences.language}\n"
+                f"AI voice: {preferences.ai_gender}\n"
+                f"Personality: {name}"
             ),
         )

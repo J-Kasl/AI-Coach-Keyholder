@@ -62,9 +62,17 @@ ApplicationService.handle_message()
   |  UserService.get_or_create_user("discord", external_id, now)
   |      -- looks up (channel, external_id) in user_channel_identities;
   |         creates a UserAccount + identity row on first contact
+  |
+  |  OnboardingService.get_or_create_preferences(user.id, now)
+  |      -- if onboarding_step != 'complete', this message is either the
+  |         user's very first-ever contact (never treated as an answer --
+  |         shown the current step's prompt directly) or an answer to
+  |         whatever step they're on (docs/architecture/user_onboarding_technical_design.md);
+  |         either way, CommandRouter is never reached for an incomplete user
   v
 CommandRouter.route(text, RequestContext(user, now))
   |  exact-match, case-insensitive, against a fixed, explicit command set
+  |  (only reached once onboarding_step == 'complete')
   v
 a registered handler (e.g. _handle_status) calls a domain module's
   public read API and returns OutgoingMessage
@@ -90,10 +98,20 @@ fallback.
 
 ## 3. What actually works today
 
+- **Discord onboarding, persisted and resumable**
+  (`docs/architecture/user_onboarding_technical_design.md`) —
+  language → AI gender → personality, backed by `user_preferences`
+  (migration 013). Runs before `CommandRouter` for any user who hasn't
+  finished it; a process restart resumes from whatever step was last
+  persisted, with no separate resume logic. `ai/identity_catalog.py`
+  is the 15-identity reference catalog used for display/validation —
+  a direct transcription of `ai_identity_technical_design.md` Sections
+  3/10, not a second source of truth for that data.
 - **A real, minimal command set** — `help` (lists commands), `status`
   (reports the current `PenaltyWindow`, if any, via
   `PenaltyEngine.get_active_or_frozen_penalty_window()` — a real read
-  against real domain state, not a mock).
+  against real domain state, not a mock), `preferences` (read-only,
+  shows a completed user's saved language/AI voice/personality).
 - **`on_system_startup()` is now actually wired into the running
   process** (`bot/discord_bot.py main()`) — a real gap fixed while
   building this: `system_state_machine.md` Section 7 has always said
@@ -117,9 +135,13 @@ fallback.
 ## 4. What is deliberately deferred
 
 - **Any actual Coach/Keyholder reasoning, Behavior Learning, or LLM
-  involvement** — `help`/`status` are hand-written, fixed responses
-  against real data; nothing here calls an LLM or makes a judgment
-  call. `ai/`/`core/coach_engine.py` still do not exist.
+  involvement** — `help`/`status`/`preferences` are hand-written, fixed
+  responses against real data; nothing here calls an LLM or makes a
+  judgment call. `ai/identity_catalog.py` exists (as static reference
+  data for onboarding — see above), but the actual communication
+  pipeline (`ai_identity_technical_design.md`'s own Sections 4–17,
+  phrasing a `Decision` in an identity's voice) and
+  `core/coach_engine.py` still do not.
 - **A natural-language router** — `CommandRouter` matches exact,
   trimmed, lowercased command strings only. No intent parsing.
 - **Trust Manager/Goal Management status commands** — both modules are
