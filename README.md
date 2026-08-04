@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**565 passing tests** across the whole repository (`pytest`), including
+**586 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -111,6 +111,7 @@ all been confirmed there.
 18. ~~Discord onboarding + persistent user preferences: language → AI gender → personality, the 15-identity catalog as approved reference data, `windows/` Task Scheduler deployment~~ **done** — see `docs/architecture/user_onboarding_technical_design.md`.
 19. ~~Task Catalog, catalog-layer-only implementation slice: `TaskTemplateVersion`/`TaskTemplateCatalogEntry`, read-only `TaskCatalog` + governance-only `TaskCatalogAdministration`~~ **done** — see `task_catalog/README.md` for the exact boundary (no task instance, no Task Runtime, no role owners assigned).
 20. ~~Advanced Mode, `OperatingMode`-only implementation slice: the global singleton, the two-stage `critical_change` transition process (`AdvancedMode` read-only + `AdvancedModeAdministration` write), the new `penalty_engine` transaction-scoped read this required~~ **done** — see `advanced_mode/README.md` for the exact boundary (no `DelegatedAuthorityPolicy`, no Penalty Window max, no tokens, no Hygiene values, no Task assignment).
+21. ~~Advanced Mode's transition process wired into Discord DM: `mode`/`mode status`/`mode request advanced`/`mode request standard`/`mode cancel`/`mode confirm`, `IncomingMessage.external_message_id`, explicit settle-before-act orchestration~~ **done** — see `application/README.md` for the exact boundary (this project's first write-capable Discord commands).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -336,17 +337,35 @@ Send the bot a direct message. **A brand-new user is walked through
 onboarding first** (language → AI voice → personality — see
 [`docs/architecture/user_onboarding_technical_design.md`](docs/architecture/user_onboarding_technical_design.md)),
 resuming automatically from wherever they left off if the bot restarts
-mid-onboarding. Once that's done, three commands are supported:
+mid-onboarding. Once that's done, the supported commands are:
 `help` (lists commands), `status` (reports the current Penalty
 Window, if any — a real read against real domain state), and
-`preferences` (shows your saved onboarding choices). Anything else
-gets a polite "I don't recognize that yet." Only DMs are processed;
-messages in a server channel are ignored. See
+`preferences` (shows your saved onboarding choices) — plus Advanced
+Mode's own `mode`/`mode status`/`mode request advanced`/
+`mode request standard`/`mode cancel`/`mode confirm` (see
+`advanced_mode/README.md` for the underlying mechanism; this project's
+*first* write-capable Discord commands — everything before this only
+read). Anything else gets a polite "I don't recognize that yet." Only
+DMs are processed; messages in a server channel are ignored. See
 [`application/README.md`](application/README.md) for the full
 boundary between the Discord adapter and the channel-agnostic
 application layer underneath it, and what's deliberately not built
-yet (no Coach/Keyholder reasoning, no LLM, no write-capable commands).
+yet (no Coach/Keyholder reasoning, no LLM, no write-capable command
+outside Advanced Mode's own transition).
 
+**Manually testing the mode transition** (`py -m bot.discord_bot`,
+then DM the bot):
+1. `mode` — confirms you start in Standard, no pending request.
+2. `mode request advanced` — creates the request; explains the
+   24-hour wait and second confirmation.
+3. `mode status` — shows the pending request's exact state.
+4. `mode cancel` — cancels it; mode remains unchanged.
+
+The full transition (24-hour wait → `AWAITING_CONFIRMATION` →
+`mode confirm`) is verified by automated tests using a `FrozenClock` —
+the production Discord flow has no time shortcut, so manually testing
+the complete end-to-end transition means actually waiting 24 real
+hours between `mode request advanced` and `mode confirm`.
 **Want the bot to start automatically on Windows** instead of running
 it manually every time? See [`windows/README.md`](windows/README.md)
 for Task Scheduler setup (optional, not required for development).
@@ -494,4 +513,5 @@ covers, what's deferred, and any real findings.
   the generic error message. See `application/README.md` for the full
   adapter/application-layer boundary, the supported message flow, and
   what's deliberately not built yet (Coach/Keyholder reasoning, an LLM,
-  any write-capable command, multi-user support in the domain modules).
+  any write-capable command outside Advanced Mode's own transition,
+  multi-user support in the domain modules).

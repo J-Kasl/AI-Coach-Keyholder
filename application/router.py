@@ -27,9 +27,13 @@ __all__ = ["RequestContext", "CommandRouter"]
 @dataclass(frozen=True, kw_only=True)
 class RequestContext:
     """What a handler receives -- the resolved UserAccount and the
-    request's own `now`, nothing channel-specific."""
+    request's own `now`, nothing channel-specific. `external_message_id`
+    is likewise channel-agnostic in shape (a plain optional string) even
+    though only Discord populates it today -- see
+    application/models.py's IncomingMessage for why it exists."""
     user: UserAccount
     now: datetime
+    external_message_id: str | None = None
 
 
 Handler = Callable[[RequestContext], OutgoingMessage]

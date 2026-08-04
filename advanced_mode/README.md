@@ -7,6 +7,15 @@ of that draft has been implemented here, and nothing more).
 
 ## What is implemented here
 
+**Now reachable manually via Discord DM** — `mode`/`mode status`/
+`mode request advanced`/`mode request standard`/`mode cancel`/
+`mode confirm`, wired through `application/service.py`. This module's
+own API is unchanged by that; the application layer is simply its
+first real caller. See `application/README.md` for the integration
+itself (the explicit settle-before-act orchestration, and how a stable
+Discord message id becomes the two independent consent references
+`request_transition()`/`confirm_transition()` need).
+
 - **`OperatingMode`** (`standard`/`advanced`) as a **global singleton**
   — not per-user. The current domain core (`trust_manager`,
   `penalty_engine`) has no `user_id` anywhere; it is single-subject by
@@ -100,11 +109,14 @@ directly, not merely asserted) and applies **at most one** transition
 per call, never cascading multiple steps (e.g. `PAUSED_BY_PENALTY_WINDOW`
 restarting into `WAITING` must not, in the same call, continue into
 `AWAITING_CONFIRMATION` -- the freshly restarted 24-hour wait has
-obviously not elapsed). No caller of this command is wired into
-Discord or anywhere else in this implementation slice -- its existence
-and contract are established now; wiring it into an actual trigger
-(startup, an incoming message, before `cancel_request()`/
-`confirm_transition()`) is future application-layer work.
+obviously not elapsed). **Now called from Discord**, via
+`application/service.py`'s own explicit
+`ApplicationService._settle_mode_state()` -- invoked at the start of
+every `mode ...` command, never hidden inside a read there either. No
+other trigger exists yet (a startup hook, or a periodic call
+independent of any incoming message) -- a user's own next `mode ...`
+message remains the only thing that settles state; see
+`application/README.md`.
 
 ## The exception-inside-a-transaction lesson (`confirm_transition()`)
 
@@ -224,9 +236,9 @@ guarantee than what actually enforces it.
   Bank, no Equipment Inventory, no Task assignment, no
   `originating_mode` on any task instance.** All remain exactly as open
   as `advanced_mode_technical_design.md` itself describes.
-- **No Discord command, no application-layer wiring at all.**
-  `request_transition()`/`cancel_request()`/`confirm_transition()`/
-  `advance_transition_state()` exist as a library API; nothing calls
-  them yet.
 - **No background scheduler** -- and none is introduced by this slice;
-  see the reconciliation-command section above.
+  see the reconciliation-command section above. `mode ...` commands
+  only settle state when a user actually sends one (see
+  `application/README.md`'s own note on `_settle_mode_state()`); there
+  is still no automatic notification the moment 24 hours actually
+  elapses with nobody watching.

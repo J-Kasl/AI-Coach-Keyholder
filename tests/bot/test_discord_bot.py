@@ -210,3 +210,37 @@ class TestAdapterLevelErrorHandling:
         reply_text = message.channel.send.call_args[0][0]
         assert bot.config.discord_token not in reply_text
         assert "test-token" not in reply_text
+
+
+class TestModeCommandsThroughTheRealAdapter:
+    def test_discord_message_id_flows_through_to_the_persisted_consent_reference(self, bot, core: CoreDatabase) -> None:
+        """Proves external_message_id genuinely flows Discord message.id
+        -> IncomingMessage -> RequestContext -> the consent reference
+        actually persisted -- not merely that the field exists."""
+        _complete_onboarding(bot)
+        _run(bot.on_message(_fake_dm_message("mode request advanced", author_id=12345, message_id=555)))
+
+        with core.transaction() as tx:
+            row = tx.fetch_one(
+                "SELECT * FROM mode_transition_requests WHERE status NOT IN ('cancelled', 'completed', 'invalidated')",
+            )
+        assert row["requested_via_consent_id"] == "discord_message:555"
+
+    def test_a_send_failure_after_mode_request_does_not_corrupt_the_committed_request(self, bot, core: CoreDatabase) -> None:
+        """Mirrors the existing onboarding send-failure test -- the
+        write (creating the mode transition request) happens before
+        send() is attempted, so a failed send leaves the persisted
+        state correct and unaffected."""
+        _complete_onboarding(bot)
+        failing_message = _fake_dm_message("mode request advanced", author_id=12345, message_id=777)
+        failing_message.channel.send = AsyncMock(side_effect=RuntimeError("simulated Discord API failure"))
+
+        _run(bot.on_message(failing_message))  # must not raise -- send() is wrapped
+
+        with core.transaction() as tx:
+            row = tx.fetch_one(
+                "SELECT * FROM mode_transition_requests WHERE status NOT IN ('cancelled', 'completed', 'invalidated')",
+            )
+        assert row is not None
+        assert row["requested_via_consent_id"] == "discord_message:777"
+        assert row["status"] == "waiting"

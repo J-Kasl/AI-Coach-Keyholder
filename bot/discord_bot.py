@@ -88,7 +88,7 @@ class CoachKeyholderBot(discord.Client):
         try:
             incoming = IncomingMessage(
                 channel="discord", external_user_id=str(message.author.id),
-                text=message.content, received_at=now,
+                text=message.content, received_at=now, external_message_id=str(message.id),
             )
             # ApplicationService.handle_message() itself never raises
             # (see its own docstring) -- this try/except is a second,

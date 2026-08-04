@@ -29,6 +29,15 @@ class IncomingMessage:
     external_user_id: str    # the channel's own identifier for the sender (e.g. Discord user id, as a string)
     text: str
     received_at: datetime
+    external_message_id: str | None = None
+    """The channel's own stable identifier for THIS message (e.g.
+    Discord's message.id, as a string) -- None for any caller that
+    doesn't have one available. Added specifically so a mutable-state
+    command (advanced_mode's two-stage transition, needing two
+    independently-auditable consent references) can build one from the
+    actual message that triggered it, without a general-purpose
+    consent module or table -- see application/service.py's own
+    `_consent_id_for()`."""
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -111,7 +111,33 @@ fallback.
   (reports the current `PenaltyWindow`, if any, via
   `PenaltyEngine.get_active_or_frozen_penalty_window()` — a real read
   against real domain state, not a mock), `preferences` (read-only,
-  shows a completed user's saved language/AI voice/personality).
+  shows a completed user's saved language/AI voice/personality),
+  `mode`/`mode status`/`mode request advanced`/`mode request standard`/
+  `mode cancel`/`mode confirm` (Advanced Mode's two-stage transition,
+  now reachable from Discord — see below).
+- **Advanced Mode's transition process, wired end-to-end from Discord
+  DM to `advanced_mode`'s own persisted state and back.** No new
+  natural-language parsing — each `mode ...` command is registered as
+  its own literal, multi-word string key in `CommandRouter` (which
+  already matched on the full trimmed/lowercased text; no router
+  change was needed at all). Two things specific to this integration,
+  not part of `advanced_mode` itself:
+  - **Explicit settle-before-act orchestration**
+    (`ApplicationService._settle_mode_state()`), called at the start of
+    every `mode ...` handler: `PenaltyEngine.ensure_current_state(now)`
+    first, then `AdvancedModeAdministration.advance_transition_state(...)`.
+    Both are real writes, both explicit here — `AdvancedMode`'s own
+    read-only API is never the one applying them (see
+    `advanced_mode/README.md` for why that separation matters).
+  - **`IncomingMessage.external_message_id`** (a small, deliberately
+    minimal extension, not a general consent module or table) —
+    Discord's own `message.id`, threaded through
+    `IncomingMessage` → `RequestContext` → `f"discord_message:{id}"`
+    as the consent reference for `request_transition()`/
+    `confirm_transition()`. Since a request and its later confirmation
+    are necessarily two different incoming Discord messages, they
+    always get two independently auditable consent references for
+    free, with no separate mechanism needed.
 - **`on_system_startup()` is now actually wired into the running
   process** (`bot/discord_bot.py main()`) — a real gap fixed while
   building this: `system_state_machine.md` Section 7 has always said
@@ -149,11 +175,15 @@ fallback.
   neither has a "list everything relevant" read API yet. `status` is
   scoped to Penalty Engine only in this slice rather than inventing a
   new domain-module method just to make the command feel complete.
-- **Any write-capable command** (starting/freezing/completing anything,
-  proposing or accepting a Goal change) — every command in this slice
-  is read-only. Building a write path means designing consent/
-  confirmation UX for Discord specifically, deliberately out of scope
-  for "does the pipe work at all."
+- **Any write-capable command outside Advanced Mode's own transition**
+  (starting/freezing/completing a Penalty Window directly, proposing or
+  accepting a Goal change) — still out of scope. `mode request ...`/
+  `mode cancel`/`mode confirm` are this project's *first* write-capable
+  Discord commands (see above) — the consent/confirmation UX question
+  this note used to defer is now answered for exactly this one case
+  (Advanced Mode's own two-stage `critical_change` process, already
+  designed with Discord-message-based consent references in mind), not
+  generalized to every other domain module's own writes.
 - **Multi-user support in the domain modules themselves** —
   `user_accounts`/`user_channel_identities` are purely this layer's own
   bookkeeping. No domain table anywhere has a `user_id` column; this
