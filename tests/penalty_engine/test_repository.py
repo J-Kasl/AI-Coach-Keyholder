@@ -497,3 +497,38 @@ class TestPublicReadAPI:
                 window.id, FreezeReason.PARTNERED_INTIMACY_AUTHORIZATION,
                 authorization_decision_id="auth-2", now=FIXED_TIME + timedelta(hours=1, minutes=30),
             )
+
+
+class TestGetActiveOrFrozenPenaltyWindowInTransaction:
+    """The new transaction-scoped read (advanced_mode's own confirm_transition()
+    needs this to check for a PW atomically, in the same transaction as
+    its own write -- see penalty_engine/repository.py's own docstring
+    for why)."""
+
+    def test_matches_the_public_methods_own_result(self, pe: PenaltyEngine, tm: TrustManager, core: CoreDatabase) -> None:
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        with core.transaction() as tx:
+            in_tx = pe.get_active_or_frozen_penalty_window_in_transaction(tx)
+        via_public = pe.get_active_or_frozen_penalty_window()
+        assert in_tx.id == via_public.id == window.id
+
+    def test_returns_none_when_nothing_active_or_frozen(self, pe: PenaltyEngine, core: CoreDatabase) -> None:
+        with core.transaction() as tx:
+            assert pe.get_active_or_frozen_penalty_window_in_transaction(tx) is None
+
+    def test_can_be_called_from_inside_another_modules_own_open_transaction(
+        self, pe: PenaltyEngine, tm: TrustManager, core: CoreDatabase,
+    ) -> None:
+        """The whole point of this method -- proves it does NOT raise
+        NestedTransactionError when called from inside an
+        already-open transaction, unlike the public
+        get_active_or_frozen_penalty_window() would."""
+        _confirm_incident(tm)
+        window = pe.start_window_if_eligible(tm, now=FIXED_TIME)
+        with core.transaction() as tx:
+            # Simulates another module's own write() closure calling this
+            # mid-transaction, exactly as advanced_mode's confirm_transition() will.
+            result = pe.get_active_or_frozen_penalty_window_in_transaction(tx)
+            tx.execute("SELECT 1")  # the same tx is still usable afterward
+        assert result.id == window.id

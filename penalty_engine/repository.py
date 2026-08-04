@@ -794,13 +794,39 @@ class PenaltyEngine:
     # Reads
     # -------------------------------------------------------------------
 
+    def get_active_or_frozen_penalty_window_in_transaction(self, tx: Transaction) -> PenaltyWindow | None:
+        """Transaction-scoped counterpart to `get_active_or_frozen_penalty_window()`
+        -- for a caller that already has an open `tx` and needs an
+        atomic, same-transaction read (e.g. `advanced_mode`'s own
+        `confirm_transition()`, which must check this immediately
+        before committing a mode change, not via a second, independent
+        connection). Never call `get_active_or_frozen_penalty_window()`
+        (which opens its own transaction) from inside an already-open
+        transaction -- that raises `NestedTransactionError`
+        (`implementation_conventions.md` Section 3); this method exists
+        specifically so callers never need to.
+
+        Reads persisted `status` only -- does NOT call
+        `ensure_current_state(now)` first, and cannot (that method
+        opens its own separate transactions and publishes its own
+        domain events on completion; it cannot safely run nested
+        inside a caller's own open `tx`). A window whose target
+        duration has elapsed by wall-clock time, but which nothing has
+        yet called `ensure_current_state(now)` for, still reads as
+        `active`/`frozen` here. Callers needing time-settled state must
+        arrange for `ensure_current_state(now)` to run through its own,
+        separate call path first -- this is a real, project-wide open
+        question (not resolved by, or specific to, this method), tracked
+        in `advanced_mode/README.md`."""
+        row = tx.fetch_one(
+            "SELECT * FROM penalty_windows WHERE status IN (?, ?) ORDER BY created_at DESC LIMIT 1",
+            (PenaltyWindowStatus.ACTIVE.value, PenaltyWindowStatus.FROZEN.value),
+        )
+        return self._row_to_window(row) if row else None
+
     def get_active_or_frozen_penalty_window(self) -> PenaltyWindow | None:
         with self._core.transaction() as tx:
-            row = tx.fetch_one(
-                "SELECT * FROM penalty_windows WHERE status IN (?, ?) ORDER BY created_at DESC LIMIT 1",
-                (PenaltyWindowStatus.ACTIVE.value, PenaltyWindowStatus.FROZEN.value),
-            )
-        return self._row_to_window(row) if row else None
+            return self.get_active_or_frozen_penalty_window_in_transaction(tx)
 
     def _last_window_closed_at(self) -> datetime:
         with self._core.transaction() as tx:

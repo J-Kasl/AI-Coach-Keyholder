@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**450 passing tests** across the whole repository (`pytest`), including
+**565 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -70,14 +70,17 @@ every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
 form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
 in `trust_manager/README.md` and `penalty_engine/README.md`).
 
-Thirteen sequential database migrations are applied so far
-(`database/migrations/001` through `013`), covering the initial Phase 0
+Eighteen sequential database migrations are applied so far
+(`database/migrations/001` through `018`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
 layer's user identity bookkeeping, the plugin infrastructure's own
-scoped migration tracking, and (013) Discord onboarding/user
-preferences. See
+scoped migration tracking, Discord onboarding/user preferences, (014)
+the Task Catalog reference layer, (015/016) its consent/timestamp
+audit columns, (017) Advanced Mode's `OperatingMode` singleton and
+two-stage transition process, and (018) its `INVALIDATED` status
+(a `source_mode` mismatch found under direct review). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -106,6 +109,8 @@ all been confirmed there.
 16. ~~Plugin Infrastructure, Step 2: `plugin_registry.py` (discovery, manifest validation, wiring into `ConsumerRegistry`/`CommandRouter`), zero real plugins yet~~ **done**
 17. ~~Plugin Infrastructure, Step 3: `plugins/goal_celebration`, the first real plugin, plus `plugin_migrations.py`~~ **done**
 18. ~~Discord onboarding + persistent user preferences: language → AI gender → personality, the 15-identity catalog as approved reference data, `windows/` Task Scheduler deployment~~ **done** — see `docs/architecture/user_onboarding_technical_design.md`.
+19. ~~Task Catalog, catalog-layer-only implementation slice: `TaskTemplateVersion`/`TaskTemplateCatalogEntry`, read-only `TaskCatalog` + governance-only `TaskCatalogAdministration`~~ **done** — see `task_catalog/README.md` for the exact boundary (no task instance, no Task Runtime, no role owners assigned).
+20. ~~Advanced Mode, `OperatingMode`-only implementation slice: the global singleton, the two-stage `critical_change` transition process (`AdvancedMode` read-only + `AdvancedModeAdministration` write), the new `penalty_engine` transaction-scoped read this required~~ **done** — see `advanced_mode/README.md` for the exact boundary (no `DelegatedAuthorityPolicy`, no Penalty Window max, no tokens, no Hygiene values, no Task assignment).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -116,9 +121,21 @@ migration total by two. Both are fixed here, and this section now
 keeps three tiers visibly distinct so that mistake doesn't recur
 silently:
 
-**1. Just implemented (this revision):** Discord onboarding and
-persistent user preferences (`docs/architecture/user_onboarding_technical_design.md`,
-approved and implemented in full — item 18 above).
+**1. Just implemented (this revision):** Advanced Mode's `OperatingMode`-only
+slice — the global singleton and its two-stage `critical_change`
+transition process (`docs/architecture/advanced_mode_technical_design.md`;
+**the document as a whole remains draft, not approved for
+implementation** — only the specific slice `advanced_mode/README.md`
+itself describes has actually been built; item 20 above). Required one
+small, confirmed-before-implementation change outside the new module:
+`penalty_engine`'s own `get_active_or_frozen_penalty_window_in_transaction(tx)`.
+
+**Previously implemented, same standard:** Task Catalog's catalog-layer
+slice — versioned, append-only task templates and their governance
+(`docs/architecture/task_catalog_technical_design.md`; **the document
+as a whole remains draft, not approved for implementation** — only the
+specific slice `task_catalog/README.md` itself describes has actually
+been built; item 19 above).
 
 **2. Approved, but deliberately deferred:** transaction-aware SDK read
 methods (`plugin_architecture_proposal.md` v1.5 Section 26 Open
@@ -128,12 +145,9 @@ built; still not started).
 **3. Drafts awaiting their own separate approval — not a queue of
 what gets built next:**
 - [`docs/architecture/memory_system_technical_design.md`](docs/architecture/memory_system_technical_design.md)
-  (v1.4) — **draft, NOT approved for implementation** (its own header
-  says so; this README previously, incorrectly, listed it as approved
-  — corrected here). The five memory layers, a single-source-of-truth
-  table per information category, an explicit ownership model.
-  Implementation not started, and not queued, pending a dedicated
-  review/approval step.
+  (v1.4) — **draft, NOT approved for implementation.** The five memory
+  layers, a single-source-of-truth table per information category, an
+  explicit ownership model. Implementation not started, not queued.
 - [`docs/architecture/relationship_decision_engine_technical_design.md`](docs/architecture/relationship_decision_engine_technical_design.md)
   (v1.1) — **draft, NOT approved for implementation.** How Domain
   State becomes one unified `Decision`, via a Relationship Engine
@@ -147,6 +161,25 @@ what gets built next:**
   and the six communication-profile values) — the communication
   pipeline itself (phrasing a `Decision` in an identity's voice) is
   still fully unapproved.
+- [`docs/architecture/advanced_mode_technical_design.md`](docs/architecture/advanced_mode_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for Section 2 (`OperatingMode` itself) and Section 11 (the
+  transition state machine), implemented for exactly that slice, item
+  20 above (with two refinements found during implementation review —
+  see the document's own notes at the start of each section). Every
+  other section — `DelegatedAuthorityPolicy`, the token transparency
+  exception, `MAX_TARGET_ACTIVE_HOURS` as a function of mode, Hygiene
+  values, Carry Bank, Task Runtime conditions — remains fully open,
+  unimplemented, and unapproved.
+- [`docs/architecture/task_catalog_technical_design.md`](docs/architecture/task_catalog_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for the specific catalog-layer slice `task_catalog/README.md`
+  describes (TC-1/TC-2/TC-4/TC-8's data shapes) — approved and
+  implemented for exactly that slice, item 19 above. Everything else
+  in the document (which future domain owns each `TaskInstanceRole`,
+  whether a Task Runtime should ever exist, `SourceReference`,
+  `binding_conditions_snapshot`) remains fully open, unimplemented,
+  and unassigned.
 
 **Already approved and implemented, not drafts:**
 [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
@@ -207,13 +240,23 @@ pip install -r requirements.txt
 On Windows, if `python`/`pip` aren't the ones you want on `PATH` (or
 you have multiple Python versions installed), the
 [`py` launcher](https://docs.python.org/3/using/windows.html#launcher)
-is the more reliable choice and works identically:
+often works better and behaves identically for these commands:
 
 ```bat
 py -m venv .venv
 .venv\Scripts\activate
 py -m pip install -r requirements.txt
 ```
+
+**Neither `python` nor `py` is guaranteed to work, though** — found on
+a real Windows install: Windows' own "App Execution Alias" feature can
+intercept both names with a near-empty stub that opens a "choose an
+app"/Microsoft Store prompt instead of running Python at all, if no
+real interpreter has been installed through a path that takes priority
+over that stub. If either command does this to you instead of running
+Python, see [`windows/README.md`](windows/README.md)'s "Interpreter
+detection" section — `windows/run_bot.ps1` finds a real interpreter
+itself, robust against exactly this.
 
 For development and running tests:
 
@@ -223,7 +266,7 @@ pytest
 ```
 
 ```bat
-:: Windows, via the py launcher
+:: Windows, via the py launcher (see the note above if this doesn't work)
 py -m pip install -r requirements-dev.txt
 py -m pytest
 ```
@@ -272,8 +315,16 @@ python -m bot.discord_bot
 ```
 
 ```bat
-:: Windows, via the py launcher
+:: Windows, via the py launcher (see the "Neither python nor py is
+:: guaranteed to work" note above -- if this doesn't run the bot,
+:: use windows\run_bot.ps1 instead, which finds a real interpreter
+:: itself)
 py -m bot.discord_bot
+```
+
+```bat
+:: Windows, robust alternative -- recommended if the above doesn't work
+.\windows\run_bot.ps1
 ```
 
 On first run, `data/coach_keyholder.db` is created automatically,
@@ -317,6 +368,12 @@ recovery_plan/   # third domain module (see recovery_plan/README.md)
 goal_management/ # fourth domain module, first independent of the Trust
                  # Manager -> Penalty Engine -> Recovery Plan branch
                  # (see goal_management/README.md)
+task_catalog/    # versioned task template reference layer -- catalog only,
+                 # no task instances, no runtime owner assigned to most roles
+                 # (see task_catalog/README.md)
+advanced_mode/   # OperatingMode global singleton + two-stage critical_change
+                 # transition process -- no DelegatedAuthorityPolicy, no other
+                 # part of the wider Advanced Mode draft (see advanced_mode/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, OnboardingService, CommandRouter, ApplicationService
                  # (see application/README.md)

@@ -228,6 +228,48 @@ No.
 
 ---
 
+## Mode Transition Request
+
+A record of a user-initiated attempt to change Operating Mode, tracked
+through six statuses (`BLOCKED_BY_PENALTY_WINDOW`, `WAITING`,
+`PAUSED_BY_PENALTY_WINDOW`, `AWAITING_CONFIRMATION`, `CANCELLED`,
+`COMPLETED`) and two independent consent references — one for the
+initial request, one for the final confirmation after an uninterrupted
+24-hour wait. A new or ongoing Penalty Window invalidates the wait in
+progress; the full 24 hours must elapse again afterward
+(`advanced_mode_technical_design.md`, draft, not approved for
+implementation as a whole — only this concept and Operating Mode
+itself are implemented; see `advanced_mode/README.md`).
+
+Status:
+Official domain term.
+
+Localized:
+No.
+
+---
+
+## Operating Mode
+
+The system's current operating mode, `Standard` or `Advanced` — a
+single, global value, not scoped to any individual user account (the
+domain core this term belongs to has no per-user concept anywhere).
+Advanced Mode delegates more operational authority to the AI in
+exchange for stricter deterministic rules; it does not change memory,
+intelligence, the journal, planning, relationship quality, or
+personality (`advanced_mode_technical_design.md`, draft, not approved
+for implementation as a whole — only this concept itself, and the
+Mode Transition Request process that changes it, are implemented; see
+`advanced_mode/README.md`).
+
+Status:
+Official domain term.
+
+Localized:
+No.
+
+---
+
 ## Penalty Engine
 
 Module responsible for managing Penalty Windows.
@@ -308,6 +350,78 @@ No.
 A binding behavioral boundary the user has explicitly agreed to. A
 confirmed Rule violation is an Incident. A Rule does not define a
 desired direction of development — see Goal.
+
+Status:
+Official domain term.
+
+Localized:
+No.
+
+---
+
+## Task Instance Role
+
+A closed set of named reasons a task instance may exist:
+`RECOVERY`, `PRIMARY`, `JOURNALING`, `INTEGRITY`, `OPTIONAL_CHALLENGE`
+(`task_catalog_technical_design.md`, draft, not approved for
+implementation as a whole). A role's presence in this enum is
+independent of whether it has a runtime owner. Only `RECOVERY` has one
+today (Recovery Plan's existing `RecoveryTask`, unaffected by Task
+Catalog). `PRIMARY`/`JOURNALING`/`INTEGRITY`/`OPTIONAL_CHALLENGE` are
+implemented here only as catalog enum values a `Task Template Version`
+may declare eligibility for — no module creates task instances of
+these roles, and this term does not imply otherwise.
+
+Status:
+Official domain term (the enum itself). The four roles without a
+runtime owner remain open architectural questions, not implemented
+runtime concepts.
+
+Localized:
+No.
+
+---
+
+## Task Template
+
+The versioned, reusable definition of a kind of task (category,
+difficulty, effort, required equipment/privacy/context, safety
+classification, and which Task Instance Roles and operating modes it
+is eligible for). Owned by Task Catalog. Never a task instance itself
+— see Task Template Version, Task Template Catalog Entry.
+
+Status:
+Official domain term. Owning module (Task Catalog) implemented for
+this term's own reference layer only — see `task_catalog/README.md`
+for the exact boundary.
+
+Localized:
+No.
+
+---
+
+## Task Template Catalog Entry
+
+The mutable current-state pointer for a Task Template — which version
+is current, and whether the template is presently eligible for new
+task instances (`active`/`deactivated`). Never holds template content
+itself; that lives exclusively in Task Template Version. Mirrors
+Goal's own relationship to Goal Version.
+
+Status:
+Official domain term.
+
+Localized:
+No.
+
+---
+
+## Task Template Version
+
+One immutable, append-only version of a Task Template's actual
+content. Never edited or deleted after creation — a correction is a
+new version under the same template, never a change to an existing
+one. Mirrors Goal Version's own append-only discipline.
 
 Status:
 Official domain term.

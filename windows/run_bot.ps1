@@ -5,15 +5,29 @@
 .DESCRIPTION
     Derives the project root from this script's own location
     ($PSScriptRoot's parent) -- contains no hardcoded path to any
-    specific user's home directory, and no token. Prefers the
-    project's own .venv if one exists; falls back to the `py` launcher
-    otherwise. Appends timestamped stdout/stderr to logs\bot.log
-    (relative to the project root, git-ignored -- see .gitignore).
+    specific user's home directory, and no token.
 
-    Intended to be called directly for manual runs during development,
-    and by install_task.ps1's registered Scheduled Task for unattended
-    runs. Behaves identically either way.
+    Uses whatever real Python interpreter -PythonPath points to, if
+    given (this is what install_task.ps1 bakes into the Scheduled
+    Task's own Action, detected once at install time via
+    Find-PythonInterpreter -- see common.ps1). If -PythonPath is not
+    given (a manual, interactive run), detects one itself, the same
+    robust way -- never a bare `python`/`py` call, since those are
+    exactly what were found, on a real Windows install, to silently
+    fail (Windows' own "App Execution Alias" stub behavior -- see
+    common.ps1's own docstring for the full explanation).
+
+    Appends timestamped stdout/stderr to logs\bot.log (relative to the
+    project root, git-ignored -- see .gitignore).
+
+.PARAMETER PythonPath
+    Absolute path to the Python interpreter to use. Optional -- if
+    omitted, detected via Find-PythonInterpreter.
 #>
+
+param(
+    [string]$PythonPath
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -27,24 +41,29 @@ if (-not (Test-Path $LogDir)) {
 
 Set-Location $ProjectRoot
 
-$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
-if (Test-Path $VenvPython) {
-    $PythonExe = $VenvPython
-} else {
-    # `py` launcher -- more reliable than a bare `python` on a machine
-    # with multiple Python installations (see README.md's own
-    # Installation section for why this project prefers it on Windows).
-    $PythonExe = "py"
+. (Join-Path $PSScriptRoot "common.ps1")
+
+if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+    $PythonPath = Find-PythonInterpreter -ProjectRoot $ProjectRoot
 }
 
 $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-Add-Content -Path $LogFile -Value "[$Timestamp] Starting bot via $PythonExe -m bot.discord_bot (cwd=$ProjectRoot)"
+
+if ([string]::IsNullOrWhiteSpace($PythonPath) -or -not (Test-Path $PythonPath)) {
+    $Message = "[$Timestamp] No working Python interpreter found (checked .venv, py, python, python3). " +
+                "Install Python and/or create a .venv, or pass -PythonPath explicitly."
+    Add-Content -Path $LogFile -Value $Message
+    Write-Error $Message
+    exit 1
+}
+
+Add-Content -Path $LogFile -Value "[$Timestamp] Starting bot via `"$PythonPath`" -m bot.discord_bot (cwd=$ProjectRoot)"
 
 # Both stdout and stderr appended to the same log file -- Python's own
 # logging (bot/discord_bot.py's logging.basicConfig) already writes to
 # stderr by default, so this captures it without any extra
 # configuration on the Python side.
-& $PythonExe -m bot.discord_bot 2>&1 | Add-Content -Path $LogFile
+& $PythonPath -m bot.discord_bot 2>&1 | Add-Content -Path $LogFile
 
 $ExitCode = $LASTEXITCODE
 $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

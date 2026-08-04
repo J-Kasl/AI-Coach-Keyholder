@@ -11,26 +11,76 @@ application itself — this is deployment tooling, not application code.
 
 ## Files
 
+- **`common.ps1`** — shared `Find-PythonInterpreter` function, used by
+  both scripts below. Not run directly.
 - **`run_bot.ps1`** — the actual launcher. Derives the project root
-  from its own location (never a hardcoded path), prefers `.venv` if
-  one exists, falls back to the `py` launcher otherwise, and appends
-  timestamped output to `..\logs\bot.log`.
+  from its own location (never a hardcoded path), uses whichever
+  Python interpreter it's told about via `-PythonPath` (or detects one
+  itself for a manual run — see "Interpreter detection" below), and
+  appends timestamped output to `..\logs\bot.log`.
 - **`install_task.ps1`** — registers a Windows Scheduled Task that
-  runs `run_bot.ps1` whenever you log on.
+  runs `run_bot.ps1` whenever you log on, with a real interpreter's
+  absolute path already baked into the Task's own Action.
 - **`uninstall_task.ps1`** — removes that Scheduled Task.
 
-None of these three scripts contain a token, a path specific to any
+None of these four scripts contain a token, a path specific to any
 one person's user account, or anything else that shouldn't be shared —
 they're safe to commit.
 
+## Interpreter detection — why this exists
+
+**Found under real-world use, not theorized:** on one real Windows
+install, neither `py` nor `python` resolved to a working interpreter
+at all. Windows' own "App Execution Alias" feature had intercepted
+both — near-empty stub executables under
+`...\WindowsApps\python.exe`/`python3.exe`, installed by Windows
+itself, that open a "choose an app"/Microsoft Store prompt instead of
+running Python whenever no real interpreter has been installed through
+a path that takes priority over that stub. The Scheduled Task
+registered fine, showed `Ready`, but `Start-ScheduledTask` produced
+`LastTaskResult = 1` and the log stopped right after "Starting bot via
+py -m bot.discord_bot" — the actual launch line was never reached.
+
+`install_task.ps1` now detects a real, working interpreter itself
+(`common.ps1`'s `Find-PythonInterpreter`) **at install time** and
+bakes its absolute path directly into the Task's Action — the Task
+never depends on `py`/`python` resolving correctly at run time, on any
+machine. Detection order: this project's own `.venv\Scripts\python.exe`
+first (if one exists — guarantees the right dependencies, not just "a"
+Python), then every `py`/`python`/`python3` match on `PATH`, skipping
+anything under `WindowsApps` or implausibly small to be a real
+interpreter. `install_task.ps1` prints exactly what it found:
+
+```
+Using Python:
+  C:\Users\you\AppData\Local\Python\bin\python.exe
+```
+
+If this ever prints nothing and the script throws instead, it means no
+real interpreter could be found anywhere it checked — install Python
+from [python.org](https://python.org) with "Add to PATH" checked, or
+create a `.venv` in the project root, then run `install_task.ps1`
+again.
+
+`run_bot.ps1` itself still works fine run manually, with no
+`-PythonPath` given — it runs the same detection itself in that case.
+
 ## Install
 
-Open PowerShell **in the `windows\` folder** (or use its full path)
-and run:
+**Open PowerShell as Administrator** (right-click PowerShell or
+Windows Terminal, choose "Run as Administrator") **in the `windows\`
+folder** (or use its full path) and run:
 
 ```powershell
 .\install_task.ps1
 ```
+
+Elevation is required — found necessary under real-world use, not
+assumed: `Register-ScheduledTask` needs it even for a task that only
+ever runs as your own account with no stored password. The script
+checks for this itself and fails with a clear message if you forgot,
+rather than letting `Register-ScheduledTask` fail deeper in with a
+less obvious error.
 
 This registers a Scheduled Task named `AICoachKeyholderBot` that
 starts the next time you log on. To give it a different name (e.g. if
@@ -71,6 +121,9 @@ registered and will start again next logon (or the next time you run
 
 ## Uninstall
 
+**Also needs an elevated (Administrator) PowerShell session** — same
+reason as install. Checked the same way, before removal is attempted.
+
 ```powershell
 .\uninstall_task.ps1
 ```
@@ -98,16 +151,24 @@ Get-ScheduledTaskInfo -TaskName "AICoachKeyholderBot"
 
 ## Manual runs during development
 
-Nothing above stops you from still running the bot directly, exactly
-as `README.md`'s "Running" section describes:
+**Recommended, robust command:**
 
 ```powershell
-py -m bot.discord_bot
+.\run_bot.ps1
 ```
 
-`run_bot.ps1` itself can also be run directly, any time, without the
-Scheduled Task installed at all — it's just `py -m bot.discord_bot`
-with path resolution and logging wrapped around it.
+Runs the same interpreter-detection logic `install_task.ps1` uses (no
+Scheduled Task needs to be installed for this — `run_bot.ps1` works
+standalone), so it works even on a machine where `py`/`python` don't
+(see "Interpreter detection" above — this is not a hypothetical
+concern, it's what this whole document exists to work around).
+
+`python -m bot.discord_bot`/`py -m bot.discord_bot`, as `README.md`'s
+own "Running" section shows, still work too, **if** `python`/`py`
+actually resolve to a real interpreter on your machine — they're
+simpler for a quick one-off run, but `.\run_bot.ps1` is the one to
+reach for by default on Windows, and the one to use if either of those
+opens a "choose an app" prompt instead of starting the bot.
 
 ## AtLogOn vs. independent of logon — and why AtLogOn is the default
 
