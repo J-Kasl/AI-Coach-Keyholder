@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**586 passing tests** across the whole repository (`pytest`), including
+**650 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -112,6 +112,7 @@ all been confirmed there.
 19. ~~Task Catalog, catalog-layer-only implementation slice: `TaskTemplateVersion`/`TaskTemplateCatalogEntry`, read-only `TaskCatalog` + governance-only `TaskCatalogAdministration`~~ **done** — see `task_catalog/README.md` for the exact boundary (no task instance, no Task Runtime, no role owners assigned).
 20. ~~Advanced Mode, `OperatingMode`-only implementation slice: the global singleton, the two-stage `critical_change` transition process (`AdvancedMode` read-only + `AdvancedModeAdministration` write), the new `penalty_engine` transaction-scoped read this required~~ **done** — see `advanced_mode/README.md` for the exact boundary (no `DelegatedAuthorityPolicy`, no Penalty Window max, no tokens, no Hygiene values, no Task assignment).
 21. ~~Advanced Mode's transition process wired into Discord DM: `mode`/`mode status`/`mode request advanced`/`mode request standard`/`mode cancel`/`mode confirm`, `IncomingMessage.external_message_id`, explicit settle-before-act orchestration~~ **done** — see `application/README.md` for the exact boundary (this project's first write-capable Discord commands).
+22. ~~Conversation Engine, Slice 1 only: runtime types and a deterministic safety shell (`ResponseCategory`, `ConversationContextProvider`/`Fragment`, `ResponseContextSnapshot`, `ResponsePlan`, `ConversationResponse`, structural validation, deterministic fallback)~~ **done** — see `conversation_engine/README.md` for the exact boundary (no LLM, no ordinary conversation, no `ApplicationService` integration, today's Discord behavior completely unchanged).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -393,6 +394,9 @@ task_catalog/    # versioned task template reference layer -- catalog only,
 advanced_mode/   # OperatingMode global singleton + two-stage critical_change
                  # transition process -- no DelegatedAuthorityPolicy, no other
                  # part of the wider Advanced Mode draft (see advanced_mode/README.md)
+conversation_engine/  # Slice 1 only -- runtime types and a deterministic safety
+                 # shell; no LLM, no ordinary conversation, not integrated into
+                 # ApplicationService (see conversation_engine/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, OnboardingService, CommandRouter, ApplicationService
                  # (see application/README.md)

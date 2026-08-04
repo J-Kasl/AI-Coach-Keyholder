@@ -62,14 +62,18 @@ Decision Engine                 classifies the situation's Entitlement
   |  (Discretionary/Guaranteed   permits it, and produces exactly one
   |   only)                      Decision (Section 5)
   v
-Communication Layer              selects/receives the active AI
-  |  (selected AI Identity)       Identity and phrases the Decision's
-  v                                explanation in that identity's voice
+Conversation Engine                selects/receives the active AI
+  |  (GOVERNANCE_EXPLANATION       Identity and phrases the Decision's
+  |   category, selected AI        explanation in that identity's voice
+  |   Identity)
+  v
 User
 ```
 
-Communication Layer and AI Identity are `ai_identity_technical_design.md`'s
-subject, not this document's — included above only to show where this
+Conversation Engine (its `GOVERNANCE_EXPLANATION` category) and AI
+Identity are `conversation_engine_technical_design.md`'s and
+`ai_identity_technical_design.md`'s own subject, not this document's
+— included above only to show where this
 document's output (`Decision`) goes next.
 
 ### 2.1 When the Pipeline Runs
@@ -265,8 +269,8 @@ owning domain module's own public API — never a direct write, never a
 ### 5.3 The Hidden Token Economy
 
 Owned exclusively by the Decision Engine. No other layer — not the
-Relationship Engine, not any domain module, not the Communication
-Layer — reads or writes it. It is consulted only where the Entitlement
+Relationship Engine, not any domain module, not Conversation Engine
+— reads or writes it. It is consulted only where the Entitlement
 Class of the current situation permits (Section 6) — never for
 Absolute-class decisions, which never touch it.
 
@@ -340,9 +344,10 @@ Partner Unlocks are Guaranteed the same way any other
 |---|---|---|---|
 | Domain modules | Relationship Engine | (no new object — each module's own existing read API) | No (not applicable) |
 | Relationship Engine | Decision Engine | `RelationshipContext` (Coach Perspective + Keyholder Perspective) | Never (REL-2) |
-| Decision Engine | Communication Layer | `Decision` (entitlement class, outcome, `explanation`) | The `explanation`, always. The entitlement class and raw outcome structure: implementation question for `ai_identity_technical_design.md`, not decided here. |
+| Decision Engine | Conversation Engine (`GOVERNANCE_EXPLANATION` category) | `Decision` (entitlement class, outcome, `explanation`) | The `explanation`, always. The entitlement class and raw outcome structure: implementation question for `ai_identity_technical_design.md`, not decided here. |
 
-**DEC-7:** The Communication Layer receives only the `Decision` object.
+**DEC-7:** Conversation Engine (its `GOVERNANCE_EXPLANATION` category, per
+`conversation_engine_technical_design.md`) receives only the `Decision` object.
 It has no read access to any domain module, to `RelationshipContext`,
 or to the Hidden Token Economy — the architectural guarantee behind
 point 2's "identity cannot affect any mechanical decision": it cannot
@@ -357,7 +362,7 @@ affect what it cannot see.
 | Decision Engine — Entitlement classification | Deterministic, always | **Stays deterministic, always** — this is a safety invariant (DEC-3), not a current-state limitation to be lifted later |
 | Decision Engine — Absolute / Guaranteed | Deterministic, always | **Stays deterministic, always** — same reasoning as `authorize_activity()`'s existing design |
 | Decision Engine — Discretionary | Not yet built | The other candidate for LLM-assisted reasoning, bounded by DEC-2 (still always produces a real `explanation`) and DEC-5 (still never reveals Hidden Token Economy internals) |
-| Communication Layer | Not yet built | The primary home for LLM usage: phrasing a `Decision`'s already-fixed `explanation` in the selected identity's voice — the LLM's job is phrasing, never inventing or altering the reason itself |
+| Conversation Engine (`GOVERNANCE_EXPLANATION` category) | Not yet built | The primary home for LLM usage: phrasing a `Decision`'s already-fixed `explanation` in the selected identity's voice — the LLM's job is phrasing, never inventing or altering the reason itself |
 
 ## 9. Open Questions Before Implementation
 
