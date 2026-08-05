@@ -606,6 +606,16 @@ exactly as today); no LLM integration of any kind.
 
 ### Slice 2 — Unmatched ordinary conversation through LLM
 
+> **Implemented.** See `conversation_engine/README.md` for the exact
+> boundary. This document's own global status remains unchanged
+> (`Draft for review, not approved for implementation`) — only Slices
+> 1 and 2 have been built; Slices 3 through 6 remain entirely
+> unimplemented and unapproved. Required one small, confirmed-before-
+> implementation fix outside this module (`infrastructure/database.py`'s
+> nested-transaction guard, made thread-local) and two small,
+> approved changes to existing files (`CommandRouter.route()`'s own
+> return contract, `bot/discord_bot.py`'s async boundary).
+
 **Prerequisites:** Slice 1 complete.
 
 - `CommandRouter` has absolute priority (CE-25) — this engine only ever

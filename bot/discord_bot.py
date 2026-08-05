@@ -29,6 +29,7 @@ Running:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 
@@ -36,6 +37,10 @@ import discord
 
 from application.models import IncomingMessage
 from application.service import ApplicationService
+from conversation_engine.engine import ConversationEngine
+from conversation_engine.ollama_adapter import OllamaConversationModel
+from conversation_engine.recent_history import TransitionalRecentMessageBuffer
+from conversation_engine.subject_queue import SubjectConversationQueue
 from core.config import Config, ConfigError
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
@@ -94,7 +99,13 @@ class CoachKeyholderBot(discord.Client):
             # (see its own docstring) -- this try/except is a second,
             # independent safety net in case something fails before or
             # after that call, not a substitute for that guarantee.
-            outgoing = self.application_service.handle_message(incoming)
+            # asyncio.to_thread() runs the whole synchronous
+            # handle_message() call (including any blocking Ollama HTTP
+            # call it may make for Slice 2's own conversational path) on
+            # a worker thread -- never on this event loop. Database is
+            # safe to call concurrently from multiple threads now (see
+            # infrastructure/database.py's own thread-local guard).
+            outgoing = await asyncio.to_thread(self.application_service.handle_message, incoming)
             reply_text = outgoing.text
         except Exception:
             logger.exception("Unhandled error processing a DM from user_id=%s", message.author.id)
@@ -177,7 +188,20 @@ def main() -> None:
         logger.error("Another instance is already performing startup reconciliation. Exiting.")
         raise SystemExit(1)
 
-    application_service = ApplicationService(config.db_path, core=core)
+    # Composition root: Conversation Engine Slice 2's own dependency
+    # graph, built here and only here -- ApplicationService never
+    # constructs OllamaConversationModel/the buffer/the queue itself
+    # (dependency injection, per explicit review decision). Uses the
+    # existing OLLAMA_HOST/OLLAMA_MODEL config fields; no new .env/Config
+    # fields are introduced for timeouts in this slice (the adapter's
+    # own DEFAULT_CONNECT_TIMEOUT_SECONDS/DEFAULT_READ_TIMEOUT_SECONDS
+    # bootstrap defaults are used as-is).
+    ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model)
+    conversation_buffer = TransitionalRecentMessageBuffer(max_exchanges_per_subject=10, max_characters_per_subject=8000)
+    conversation_queue = SubjectConversationQueue()
+    conversation_engine = ConversationEngine(model=ollama_model, buffer=conversation_buffer, queue=conversation_queue)
+
+    application_service = ApplicationService(config.db_path, core=core, conversation_engine=conversation_engine)
     bot = build_bot(config, db, clock, application_service)
     bot.run(config.discord_token, log_handler=None)
 

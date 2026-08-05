@@ -21,7 +21,7 @@ from typing import Callable
 
 from application.models import OutgoingMessage, UserAccount
 
-__all__ = ["RequestContext", "CommandRouter"]
+__all__ = ["RequestContext", "RouteResult", "CommandRouter"]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -39,22 +39,52 @@ class RequestContext:
 Handler = Callable[[RequestContext], OutgoingMessage]
 
 
+@dataclass(frozen=True, kw_only=True)
+class RouteResult:
+    """CommandRouter.route()'s own return type -- explicit matched/
+    unmatched signal, not a fixed fallback string baked into the
+    router itself. Exactly one of the two states is representable:
+    matched with an outgoing message, or unmatched with none."""
+    matched: bool
+    outgoing: OutgoingMessage | None
+
+    def __post_init__(self) -> None:
+        if self.matched != (self.outgoing is not None):
+            raise ValueError("matched must be true exactly when outgoing is present.")
+
+
 class CommandRouter:
     def __init__(self) -> None:
         self._handlers: dict[str, Handler] = {}
         self._descriptions: dict[str, str] = {}
+        self._families: dict[str, Handler] = {}
 
     def register(self, command: str, description: str, handler: Handler) -> None:
         key = command.strip().lower()
         self._handlers[key] = handler
         self._descriptions[key] = description
 
-    def route(self, text: str, context: RequestContext) -> OutgoingMessage:
+    def register_family(self, family: str, *, invalid_handler: Handler) -> None:
+        """A family token (e.g. "mode") whose own invalid/unrecognized
+        multi-word inputs (e.g. "mode nonsense") get a deterministic,
+        family-specific reply instead of falling through to Conversation
+        Engine's ordinary unmatched-text path. Deliberately NOT fuzzy
+        matching -- only the exact first whitespace-separated token is
+        checked against registered families."""
+        self._families[family.strip().lower()] = invalid_handler
+
+    def route(self, text: str, context: RequestContext) -> RouteResult:
         command = text.strip().lower()
         handler = self._handlers.get(command)
-        if handler is None:
-            return OutgoingMessage(text=self._unrecognized_text())
-        return handler(context)
+        if handler is not None:
+            return RouteResult(matched=True, outgoing=handler(context))
+
+        first_token = command.split(maxsplit=1)[0] if command else ""
+        family_handler = self._families.get(first_token)
+        if family_handler is not None:
+            return RouteResult(matched=True, outgoing=family_handler(context))
+
+        return RouteResult(matched=False, outgoing=None)
 
     def help_text(self) -> str:
         lines = ["Available commands:"]
@@ -62,5 +92,9 @@ class CommandRouter:
             lines.append(f"  {command} — {self._descriptions[command]}")
         return "\n".join(lines)
 
-    def _unrecognized_text(self) -> str:
+    def unrecognized_text(self) -> str:
+        """Public now -- ApplicationService's own conversation_engine is
+        None branch (no engine configured) needs this same fallback
+        text; route() itself no longer produces it directly (RouteResult's
+        matched=False leaves that decision to the caller)."""
         return "I don't recognize that yet. Send `help` to see what I can do."

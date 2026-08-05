@@ -189,7 +189,8 @@ def build_commands(sdk, repo):
         from application.models import UserAccount
         ctx = RequestContext(user=UserAccount(created_at=FIXED_TIME, last_seen_at=FIXED_TIME), now=FIXED_TIME)
         result = command_router.route("ping", ctx)
-        assert result.text == "pong"
+        assert result.matched is True
+        assert result.outgoing.text == "pong"
 
     def test_an_event_consumer_plugin_loads_and_reacts_to_a_real_event(self, core: CoreDatabase, plugins_dir: Path) -> None:
         _write_plugin(

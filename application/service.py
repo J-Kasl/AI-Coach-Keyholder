@@ -37,6 +37,9 @@ from advanced_mode.repository import AdvancedMode, AdvancedModeAdministration
 from application.models import IncomingMessage, OutgoingMessage
 from application.onboarding_service import OnboardingService
 from application.router import CommandRouter, RequestContext
+from conversation_engine.engine import ConversationEngine
+from conversation_engine.fallback import FallbackReason, render_fallback
+from conversation_engine.models import UnknownIdentityError
 from application.user_service import UserService
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
@@ -49,9 +52,13 @@ logger = logging.getLogger("ai_coach_keyholder.application")
 
 
 class ApplicationService:
-    def __init__(self, db_path: str | Path, *, core: CoreDatabase | None = None) -> None:
+    def __init__(
+        self, db_path: str | Path, *, core: CoreDatabase | None = None,
+        conversation_engine: ConversationEngine | None = None,
+    ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
+        self._conversation_engine = conversation_engine  # DI only -- never constructed here
 
         self.user_service = UserService(self.db_path, core=self._core)
         self.onboarding_service = OnboardingService(self.db_path, core=self._core)
@@ -104,7 +111,29 @@ class ApplicationService:
                 return result.reply
 
             context = RequestContext(user=user, now=incoming.received_at, external_message_id=incoming.external_message_id)
-            return self.router.route(incoming.text, context)
+            result = self.router.route(incoming.text, context)
+            if result.matched:
+                return result.outgoing
+
+            if self._conversation_engine is None:
+                return OutgoingMessage(text=self.router.unrecognized_text())
+
+            if preferences.identity_id is None:
+                return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
+
+            try:
+                response = self._conversation_engine.generate_response(
+                    subject_key=user.id, current_user_message=incoming.text,
+                    language=preferences.language or "en", identity_id=preferences.identity_id,
+                    now=incoming.received_at,
+                )
+            except UnknownIdentityError:
+                # A stored identity_id that no longer matches any catalog
+                # entry -- same deterministic fallback as identity_id is
+                # None, not the generic top-level error path; this is a
+                # "missing required context" situation, not a bug crash.
+                return OutgoingMessage(text=render_fallback(FallbackReason.MISSING_REQUIRED_CONTEXT).text)
+            return OutgoingMessage(text=response.text)
         except Exception:
             logger.exception("ApplicationService.handle_message failed for channel=%r", incoming.channel)
             return OutgoingMessage(text="Something went wrong handling that. It's been logged.")
@@ -136,6 +165,7 @@ class ApplicationService:
             "Give final confirmation for a pending mode transition, once eligible -- must be a separate message from the original request",
             self._handle_mode_confirm,
         )
+        self.router.register_family("mode", invalid_handler=self._handle_mode_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())
@@ -212,6 +242,18 @@ class ApplicationService:
         if ctx.external_message_id is None:
             return None
         return f"discord_message:{ctx.external_message_id}"
+
+    def _handle_mode_invalid(self, ctx: RequestContext) -> OutgoingMessage:
+        """The 'mode' command-family invalid_handler -- catches
+        anything starting with the token 'mode' that isn't one of the
+        exact registered mode commands (e.g. 'mode nonsense',
+        'mode request nonsense'). Deterministic, never falls through
+        to Conversation Engine -- no fuzzy matching, just the family
+        token check CommandRouter.route() itself performs."""
+        return OutgoingMessage(
+            text="That's not a recognized `mode` command. Try `mode`, `mode status`, "
+                 "`mode request advanced`, `mode request standard`, `mode cancel`, or `mode confirm`."
+        )
 
     def _handle_mode_status(self, ctx: RequestContext) -> OutgoingMessage:
         self._settle_mode_state(ctx)

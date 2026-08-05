@@ -33,9 +33,16 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 # directories -- exactly the set CE-20 requires to have zero import of
 # conversation_engine.
 _CHECKED_PACKAGES = [
-    "application", "bot", "trust_manager", "penalty_engine", "recovery_plan",
+    "trust_manager", "penalty_engine", "recovery_plan",
     "goal_management", "task_catalog", "advanced_mode", "infrastructure", "ai",
 ]
+# application/ and bot/ are each checked separately below: service.py
+# (Slice 2's own ApplicationService integration point) and
+# discord_bot.py (the composition root, per the approved plan's own
+# point 14) are EXPECTED to import conversation_engine now -- every
+# other file in either package must still not.
+_APPLICATION_FILES_ALLOWED_TO_IMPORT = {"service.py"}
+_BOT_FILES_ALLOWED_TO_IMPORT = {"discord_bot.py"}
 
 
 def _imports_conversation_engine(path: Path) -> bool:
@@ -62,13 +69,52 @@ class TestNoExistingPackageImportsConversationEngine:
                     offending.append(str(py_file.relative_to(PROJECT_ROOT)))
         assert offending == [], f"Found conversation_engine import(s) in files that must not have one: {offending}"
 
+    def test_application_package_only_service_py_imports_it(self) -> None:
+        """Slice 2's own approved integration point -- service.py is
+        EXPECTED to import conversation_engine now; every other file in
+        application/ (router.py, models.py, onboarding_service.py,
+        user_service.py) must still not."""
+        offending: list[str] = []
+        application_dir = PROJECT_ROOT / "application"
+        for py_file in application_dir.rglob("*.py"):
+            if py_file.name in _APPLICATION_FILES_ALLOWED_TO_IMPORT:
+                continue
+            if _imports_conversation_engine(py_file):
+                offending.append(str(py_file.relative_to(PROJECT_ROOT)))
+        assert offending == []
+
+    def test_service_py_does_in_fact_import_it(self) -> None:
+        """Positive proof the approved integration actually exists --
+        not just that nothing ELSE imports it."""
+        service_py = PROJECT_ROOT / "application" / "service.py"
+        assert _imports_conversation_engine(service_py)
+
+    def test_bot_package_only_discord_bot_py_imports_it(self) -> None:
+        """The composition root (bot/discord_bot.py's own main()) is
+        EXPECTED to import conversation_engine to construct
+        OllamaConversationModel/the buffer/the queue/the engine -- no
+        other file in bot/ should."""
+        offending: list[str] = []
+        bot_dir = PROJECT_ROOT / "bot"
+        for py_file in bot_dir.rglob("*.py"):
+            if py_file.name in _BOT_FILES_ALLOWED_TO_IMPORT:
+                continue
+            if _imports_conversation_engine(py_file):
+                offending.append(str(py_file.relative_to(PROJECT_ROOT)))
+        assert offending == []
+
+    def test_discord_bot_py_does_in_fact_import_it(self) -> None:
+        discord_bot_py = PROJECT_ROOT / "bot" / "discord_bot.py"
+        assert _imports_conversation_engine(discord_bot_py)
+
 
 class TestExistingCommandBehaviorUnaffected:
-    """Constructs a real ApplicationService (which now also constructs
-    conversation_engine-adjacent... no, actually nothing --
-    ApplicationService itself has no conversation_engine dependency at
-    all, confirmed by the AST scan above) and exercises a few command
-    paths directly."""
+    """Constructs a real ApplicationService WITHOUT injecting a
+    conversation_engine (the default, conversation_engine=None) and
+    exercises a few known command paths directly -- proves their
+    behavior is unchanged by Slice 2's own integration, which only
+    activates for unmatched text and only when an engine is actually
+    injected."""
 
     @pytest.fixture
     def service(self, tmp_path: Path) -> ApplicationService:

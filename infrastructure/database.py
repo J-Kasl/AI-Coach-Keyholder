@@ -23,6 +23,7 @@ from __future__ import annotations
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
+from threading import local
 from typing import Any, Callable, Iterable, Iterator, Sequence, TypeVar
 
 __all__ = [
@@ -98,6 +99,18 @@ class Database:
     `BEGIN IMMEDIATE` (see `transaction()`) correctly serializes
     concurrent writers across separate OS processes at the SQLite
     engine level regardless of this class's own thread-safety scope.
+
+    UPDATE (Conversation Engine Slice 2): the paragraph above described
+    a real, empirically-confirmed problem, not just a caveat -- a
+    single shared `Database` instance called concurrently from
+    multiple threads (exactly what `asyncio.to_thread()` does) produced
+    widespread spurious `NestedTransactionError`s, because the guard
+    was a plain instance attribute racing across threads. Fixed by
+    making the guard thread-local (`threading.local()`) -- one
+    `Database` instance IS now safe for concurrent `transaction()`
+    calls from multiple threads; each thread has its own independent
+    open/closed state, and nesting is still caught, but only within the
+    SAME thread, which is the only case that was ever meaningful.
     """
 
     def __init__(self, db_path: str | Path, *, busy_timeout_ms: int = 5000) -> None:
@@ -114,7 +127,13 @@ class Database:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._busy_timeout_ms = busy_timeout_ms
-        self._transaction_open = False
+        self._transaction_state = local()
+
+    def _is_transaction_open_in_current_thread(self) -> bool:
+        return bool(getattr(self._transaction_state, "open", False))
+
+    def _set_transaction_open_in_current_thread(self, value: bool) -> None:
+        self._transaction_state.open = value
 
     def _connect(self) -> sqlite3.Connection:
         """
@@ -148,8 +167,12 @@ class Database:
         (`implementation_conventions.md` Section 10) of acquiring the
         write lock at the start of a binding operation rather than
         discovering a write conflict partway through it.
+
+        The nested-transaction guard is THREAD-LOCAL (see this class's
+        own docstring) -- public API and commit/rollback behavior are
+        otherwise unchanged from before Slice 2.
         """
-        if self._transaction_open:
+        if self._is_transaction_open_in_current_thread():
             raise NestedTransactionError(
                 "transaction() was called while a transaction is already "
                 "open on this Database instance. Compose the two operations "
@@ -157,18 +180,20 @@ class Database:
                 "of nesting two."
             )
 
-        conn = self._connect()
-        self._transaction_open = True
+        self._set_transaction_open_in_current_thread(True)
         try:
-            conn.execute("BEGIN IMMEDIATE")
-            yield Transaction(conn)
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+            conn = self._connect()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                yield Transaction(conn)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
         finally:
-            self._transaction_open = False
-            conn.close()
+            self._set_transaction_open_in_current_thread(False)
 
     @contextmanager
     def raw_connection(self) -> Iterator[sqlite3.Connection]:

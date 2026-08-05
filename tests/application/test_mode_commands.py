@@ -98,10 +98,13 @@ class TestModeStatus:
         b = service.handle_message(_incoming("mode status", external_message_id="m5"))
         assert a.text == b.text
 
-    def test_unknown_mode_command_falls_through_to_the_generic_unrecognized_reply(self, service: ApplicationService) -> None:
+    def test_unknown_mode_command_gets_the_mode_family_deterministic_reply(self, service: ApplicationService) -> None:
+        """The 'mode' command-family invalid_handler catches this now --
+        not the generic unrecognized-text fallback, and never
+        Conversation Engine (CE-25 -- known family tokens never reach it)."""
         _complete_onboarding(service)
         result = service.handle_message(_incoming("mode frobnicate", external_message_id="m4"))
-        assert "don't recognize" in result.text.lower()
+        assert "not a recognized `mode` command" in result.text.lower()
 
 
 class TestModeRequestAdvanced:

@@ -51,12 +51,18 @@ class ResponseCategory(StrEnum):
 
 class GenerationPath(StrEnum):
     """
-    Only paths that actually exist as real renderers in THIS slice.
-    No LLM value exists here -- adding one before any LLM path is
-    implemented would be an enum member with nothing behind it,
-    contradicting Slice 1's own "no LLM" scope.
+    Slice 2 adds MODEL_GENERATION -- the INTENDED path for every
+    actively-processed unmatched conversational message, decided by
+    build_response_plan() regardless of whether the model actually
+    succeeds. DETERMINISTIC_FALLBACK is not an alternative plan for
+    the same request within an active engine -- it is the real
+    RESPONSE returned after a model failure/validation failure, or
+    when no engine is configured at all (in which case
+    ApplicationService never even reaches a model plan). See
+    conversation_engine/engine.py's own docstring.
     """
     DETERMINISTIC_FALLBACK = "deterministic_fallback"
+    MODEL_GENERATION = "model_generation"
 
 
 class UnknownIdentityError(ValueError):
