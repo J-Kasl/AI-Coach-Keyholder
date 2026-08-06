@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**753 passing tests** across the whole repository (`pytest`), including
+**823 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -114,6 +114,7 @@ all been confirmed there.
 21. ~~Advanced Mode's transition process wired into Discord DM: `mode`/`mode status`/`mode request advanced`/`mode request standard`/`mode cancel`/`mode confirm`, `IncomingMessage.external_message_id`, explicit settle-before-act orchestration~~ **done** — see `application/README.md` for the exact boundary (this project's first write-capable Discord commands).
 22. ~~Conversation Engine, Slice 1 only: runtime types and a deterministic safety shell (`ResponseCategory`, `ConversationContextProvider`/`Fragment`, `ResponseContextSnapshot`, `ResponsePlan`, `ConversationResponse`, structural validation, deterministic fallback)~~ **done** — see `conversation_engine/README.md` for the exact boundary (no LLM, no ordinary conversation, no `ApplicationService` integration, today's Discord behavior completely unchanged).
 23. ~~Conversation Engine, Slice 2: real Ollama-backed ordinary conversation for unmatched text only, ticket-based per-subject FIFO queue, transitional in-memory recent-history buffer, `Database`'s thread-local transaction guard fix~~ **done** — see `conversation_engine/README.md` for the exact boundary (no Memory System, no tool calling, no `GOVERNANCE_EXPLANATION`, no provider registry).
+24. ~~Memory System, non-persistent Working Memory foundation slice only: `WorkingMemoryRole`/`WorkingMemoryTurn`/`WorkingMemorySnapshot`, `WorkingMemoryReader`/`WorkingMemoryWriter` protocols, `InMemoryWorkingMemory` (process-lifetime, per-subject, atomic whole-exchange commit, oldest-whole-exchange trimming, thread-safe, no FIFO of its own)~~ **done** — see `memory_system/README.md` for the exact boundary (no persistence, no migration, no Conversation Engine wiring, all four remaining memory layers still blocked on an unwritten privacy/consent design).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -395,9 +396,12 @@ task_catalog/    # versioned task template reference layer -- catalog only,
 advanced_mode/   # OperatingMode global singleton + two-stage critical_change
                  # transition process -- no DelegatedAuthorityPolicy, no other
                  # part of the wider Advanced Mode draft (see advanced_mode/README.md)
-conversation_engine/  # Slice 1 only -- runtime types and a deterministic safety
-                 # shell; no LLM, no ordinary conversation, not integrated into
-                 # ApplicationService (see conversation_engine/README.md)
+conversation_engine/  # Slices 1-2 -- runtime types, deterministic safety shell,
+                 # and real Ollama-backed conversation for unmatched text only;
+                 # no Memory System wiring yet (see conversation_engine/README.md)
+memory_system/   # non-persistent Working Memory foundation slice only -- process-
+                 # lifetime, per-subject, in-memory; no persistence, no migration,
+                 # not yet wired into Conversation Engine (see memory_system/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, OnboardingService, CommandRouter, ApplicationService
                  # (see application/README.md)
