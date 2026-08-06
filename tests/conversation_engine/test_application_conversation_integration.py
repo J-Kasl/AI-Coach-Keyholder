@@ -10,7 +10,7 @@ from pathlib import Path
 from application.models import IncomingMessage
 from application.service import ApplicationService
 from conversation_engine.engine import ConversationEngine
-from conversation_engine.recent_history import TransitionalRecentMessageBuffer
+from memory_system.working_memory import InMemoryWorkingMemory
 from conversation_engine.subject_queue import SubjectConversationQueue
 from infrastructure.database import Database as CoreDatabase
 
@@ -63,9 +63,10 @@ class TestIdentityFallback:
             def generate(self, *, request):
                 raise AssertionError("model must never be called when identity_id is None")
 
+        wm = InMemoryWorkingMemory(max_exchanges_per_subject=5, max_characters_per_subject=5000)
         engine = ConversationEngine(
             model=_AssertNeverCalledModel(),
-            buffer=TransitionalRecentMessageBuffer(max_exchanges_per_subject=5, max_characters_per_subject=5000),
+            working_memory_reader=wm, working_memory_writer=wm,
             queue=SubjectConversationQueue(),
         )
         service = ApplicationService(core.db_path, core=core, conversation_engine=engine)
@@ -86,9 +87,10 @@ class TestSlowModelDoesNotBreakAnything:
     def test_a_slow_but_successful_model_call_still_returns_correctly(self, tmp_path: Path) -> None:
         core = CoreDatabase(tmp_path / "test.db")
         _apply_migrations(core)
+        wm = InMemoryWorkingMemory(max_exchanges_per_subject=5, max_characters_per_subject=5000)
         engine = ConversationEngine(
             model=_SlowModel("delayed but fine"),
-            buffer=TransitionalRecentMessageBuffer(max_exchanges_per_subject=5, max_characters_per_subject=5000),
+            working_memory_reader=wm, working_memory_writer=wm,
             queue=SubjectConversationQueue(),
         )
         service = ApplicationService(core.db_path, core=core, conversation_engine=engine)
@@ -102,9 +104,10 @@ class TestKnownCommandServedDuringAnotherSubjectsGeneration:
     def test_known_command_for_one_user_is_not_blocked_by_another_users_generation(self, tmp_path: Path) -> None:
         core = CoreDatabase(tmp_path / "test.db")
         _apply_migrations(core)
+        wm = InMemoryWorkingMemory(max_exchanges_per_subject=5, max_characters_per_subject=5000)
         engine = ConversationEngine(
             model=_SlowModel("slow reply", delay_seconds=0.2),
-            buffer=TransitionalRecentMessageBuffer(max_exchanges_per_subject=5, max_characters_per_subject=5000),
+            working_memory_reader=wm, working_memory_writer=wm,
             queue=SubjectConversationQueue(),
         )
         service = ApplicationService(core.db_path, core=core, conversation_engine=engine)

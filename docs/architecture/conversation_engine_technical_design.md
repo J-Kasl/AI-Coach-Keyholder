@@ -637,6 +637,21 @@ exactly as today); no LLM integration of any kind.
 
 ### Slice 3 — Memory System read integration
 
+> **Implemented — diverges from this section's own original text
+> below.** See `conversation_engine/README.md`'s own "Slice 3" section
+> for the exact boundary. What was actually built: `ConversationEngine`
+> now takes `working_memory_reader`/`working_memory_writer` as
+> **direct, separate constructor dependencies** (`memory_system`'s own
+> `WorkingMemoryReader`/`WorkingMemoryWriter` Protocols), not a
+> `memory.working`/`memory.retrieved` `ConversationContextProvider` as
+> this section's own original text below describes — no
+> `ConversationContextProvider`-based integration was built at all.
+> `TransitionalRecentMessageBuffer` was removed as this section
+> originally specified. This document's own global status remains
+> unchanged (`Draft for review, not approved for implementation`) —
+> only Slices 1 through 3 have been built; Slices 4 through 6 remain
+> entirely unimplemented and unapproved.
+
 **Prerequisites:** `memory_system_technical_design.md` has an actual,
 implemented read API — not before.
 

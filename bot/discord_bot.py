@@ -39,9 +39,9 @@ from application.models import IncomingMessage
 from application.service import ApplicationService
 from conversation_engine.engine import ConversationEngine
 from conversation_engine.ollama_adapter import OllamaConversationModel
-from conversation_engine.recent_history import TransitionalRecentMessageBuffer
 from conversation_engine.subject_queue import SubjectConversationQueue
 from core.config import Config, ConfigError
+from memory_system.working_memory import InMemoryWorkingMemory
 from database.database import Database
 from database.models import ConversationMessage, MessageRole
 from infrastructure.clock import Clock, SystemClock
@@ -197,9 +197,12 @@ def main() -> None:
     # own DEFAULT_CONNECT_TIMEOUT_SECONDS/DEFAULT_READ_TIMEOUT_SECONDS
     # bootstrap defaults are used as-is).
     ollama_model = OllamaConversationModel(host=config.ollama_host, model_name=config.ollama_model)
-    conversation_buffer = TransitionalRecentMessageBuffer(max_exchanges_per_subject=10, max_characters_per_subject=8000)
+    working_memory = InMemoryWorkingMemory(max_exchanges_per_subject=10, max_characters_per_subject=8000)
     conversation_queue = SubjectConversationQueue()
-    conversation_engine = ConversationEngine(model=ollama_model, buffer=conversation_buffer, queue=conversation_queue)
+    conversation_engine = ConversationEngine(
+        model=ollama_model, working_memory_reader=working_memory, working_memory_writer=working_memory,
+        queue=conversation_queue,
+    )
 
     application_service = ApplicationService(config.db_path, core=core, conversation_engine=conversation_engine)
     bot = build_bot(config, db, clock, application_service)

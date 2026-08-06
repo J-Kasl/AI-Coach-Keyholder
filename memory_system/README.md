@@ -75,13 +75,23 @@ acquired the internal lock," never a stronger FIFO promise.
 remains the layer responsible for real per-subject ordering, when a
 future slice wires the two together.
 
-## What is explicitly NOT decided here — Conversation Engine Slice 3's own work
+## Conversation Engine integration — implemented (Slice 3)
 
-- How Conversation Engine reacts to a `read()` failure.
-- How Conversation Engine reacts to a `commit_exchange()` failure.
-- Where memory-related errors get logged once integrated.
-- Whether `InMemoryWorkingMemory` is handed to `ConversationEngine`
-  directly, or wrapped.
+Previously listed as undecided here; now resolved and implemented.
+See `conversation_engine/README.md`'s own "Slice 3" section for the
+full detail. Summary:
+
+- `ConversationEngine` reads/writes through `WorkingMemoryReader`/
+  `WorkingMemoryWriter` — separate dependencies, injected, never
+  constructed by `ConversationEngine` itself.
+- A `read()` failure (expected or unexpected) is logged once by
+  `ConversationEngine` and degrades to an empty history — never
+  blocks the conversation.
+- A `commit_exchange()` failure (expected, capacity, or unexpected)
+  is logged once; the already-validated response is still returned to
+  the user regardless.
+- This module itself still never logs anything — the single logging
+  point remains `ConversationEngine`'s own orchestration.
 
 ## What is explicitly NOT implemented — still draft, still open
 
@@ -107,15 +117,10 @@ future slice wires the two together.
 - **No sensitive-data taxonomy for persistent storage**, no export, no
   delete-all, no account-deletion integration, no user-facing memory
   commands, no embeddings/vector store, no model-driven extraction.
-- **No Conversation Engine integration.** Nothing in `application/`,
-  `bot/`, or `conversation_engine/` references this package yet
-  (verified via AST scan) — `conversation_engine/recent_history.py`'s
-  own `TransitionalRecentMessageBuffer` remains exactly as it was,
-  fully functional, completely untouched. Replacing it with
-  `InMemoryWorkingMemory` is Conversation Engine Slice 3's own future
-  work, not assumed or half-done here.
-- **No `ConversationContextProvider` integration** — no demonstrated
-  type-compatibility claim is made; that boundary is Slice 3's own
-  design question.
+- **No `ConversationContextProvider` integration** — `InMemoryWorkingMemory`
+  is injected directly into `ConversationEngine` via
+  `WorkingMemoryReader`/`WorkingMemoryWriter`, never disguised as a
+  `ConversationContextProvider` (no demonstrated type-compatibility
+  ever existed between the two).
 - **No session semantics.** `subject_key` is the only dimension; no
   session ID, no session lifecycle.

@@ -5,6 +5,58 @@ Canonical design: `docs/architecture/conversation_engine_technical_design.md`
 whole document** — this README describes exactly which specific slice
 of that draft has been implemented here, and nothing more).
 
+## What is implemented here — Slice 3 (Working Memory integration)
+
+Replaced `TransitionalRecentMessageBuffer` with `memory_system`'s own
+`InMemoryWorkingMemory`, via the `WorkingMemoryReader`/`WorkingMemoryWriter`
+Protocols. See `memory_system/README.md` for that module's own
+contract — this section covers only the Conversation Engine side of
+the cutover.
+
+- **`ConversationEngine.__init__`** now takes `working_memory_reader`/
+  `working_memory_writer` — **separate** parameters, not one combined
+  Protocol (least privilege, independent read/write failure testing,
+  and room for a future persistent implementation with genuinely
+  different read/write failure modes, without forcing one class to
+  implement both).
+- **Orchestration, unchanged in structure**: read, generation,
+  validation, and commit all still happen inside
+  `SubjectConversationQueue.turn(subject_key)` — only the read/commit
+  calls themselves changed from `buffer.get_messages()`/
+  `buffer.append_exchange()` to `working_memory_reader.read()`/
+  `working_memory_writer.commit_exchange()`.
+- **Read failure policy**: an expected `WorkingMemoryError` (or any
+  unexpected exception) during `read()` is logged once, then the
+  engine proceeds with an **empty** history — Working Memory turns are
+  not authoritative domain facts, so an empty history is a safe
+  degradation (the same state a brand-new subject's first message
+  already has), not a fabricated one. The model is still called.
+- **Write failure policy** — the most consequential decision in this
+  slice: if generation and validation both succeed but
+  `commit_exchange()` fails (`WorkingMemoryError`,
+  `WorkingMemoryCapacityError`, or anything unexpected), **the
+  already-validated response is still returned to the user**.
+  Discarding a safe, correct response over an internal memory-
+  continuity failure would be disproportionate. No retry, no partial
+  commit. The next turn simply won't see this exchange in its history
+  — a real but bounded consequence, not silent corruption.
+- **Expected vs. unexpected failures get different log codes** —
+  `working_memory_read_failed` vs. `working_memory_unexpected_read_error`;
+  `working_memory_commit_failed` vs. `working_memory_capacity_exceeded`
+  vs. `working_memory_unexpected_commit_error`. An unexpected
+  (programmer/infrastructure) exception is never mislabeled as an
+  ordinary, anticipated condition.
+- **`prompt_builder.py`** now imports only `WorkingMemoryTurn`/
+  `WorkingMemoryRole` from `memory_system.models` — immutable types
+  only, never `InMemoryWorkingMemory` or any concrete storage.
+- **System independence, updated**: `conversation_engine/engine.py`
+  and `conversation_engine/prompt_builder.py` are the **only** two
+  files in this project permitted to import `memory_system` (plus
+  `bot/discord_bot.py`'s own composition root, which constructs
+  `InMemoryWorkingMemory`) — enforced by
+  `tests/memory_system/test_system_independence.py`, no blanket
+  package-wide exception.
+
 ## What is implemented here — Slice 2 (ordinary unmatched conversation via Ollama)
 
 **The first real AI-generated conversation in this project.** Only for
@@ -46,12 +98,18 @@ handler and never reaches this path at all (CE-25).
   retroactively rewritten to `DETERMINISTIC_FALLBACK` if the model
   later fails. A model failure produces a fallback *response*, not a
   changed *plan*.
-- **`recent_history.py`** — `TransitionalRecentMessageBuffer`. In-memory,
-  per-subject (`UserAccount.id`), bounded by both exchange count and
-  character budget, trims oldest **whole** exchanges only. No
-  persistence, no migration, wiped on every process restart. Only a
-  fully successful, validated exchange is ever stored — never on a
-  fallback path.
+- **Working Memory (Slice 3)** — `conversation_engine/recent_history.py`
+  and its `TransitionalRecentMessageBuffer` have been **removed**.
+  `engine.py` and `prompt_builder.py` now read/write through
+  `memory_system`'s own `WorkingMemoryReader`/`WorkingMemoryWriter`
+  Protocols, concretely `InMemoryWorkingMemory`
+  (`memory_system/working_memory.py`) — see
+  `memory_system/README.md` for that module's own contract. Same
+  behavior as before (process-lifetime, per-subject, in-memory, no
+  persistence, same 10-exchange/8000-character limits) — a mechanical
+  cutover, not a behavior change. No process-local data was migrated
+  — both mechanisms were always process-local; a deploy/restart wipes
+  either one equally.
 - **`subject_queue.py`** — `SubjectConversationQueue`, a **ticket-based
   FIFO**, not a plain `threading.Lock` (a bare lock guarantees mutual
   exclusion but not order). Guarantees: *"For one subject, conversational
@@ -125,14 +183,14 @@ outgoing = await asyncio.to_thread(self.application_service.handle_message, inco
 ```
 
 The composition root (`main()`) is the **only** place `OllamaConversationModel`/
-`TransitionalRecentMessageBuffer`/`SubjectConversationQueue`/
+`InMemoryWorkingMemory`/`SubjectConversationQueue`/
 `ConversationEngine` are constructed, using the existing `config.ollama_host`/
 `config.ollama_model`.
 
 ### The DB-write invariant
 
 > Conversation Engine, the `ConversationModel` adapter, the prompt
-> builder, response planner, transitional recent-history buffer, and
+> builder, response planner, Working Memory, and
 > model output must not directly or indirectly cause a new domain,
 > governance, or conversational database write. Existing identity and
 > onboarding bootstrap behavior in `ApplicationService` remains
@@ -291,8 +349,6 @@ step (see the project's own root `README.md`).
 
 ## What is explicitly NOT implemented — still draft, still open
 
-- **No Memory System integration.** `TransitionalRecentMessageBuffer`
-  is explicitly temporary — retired, not extended, once Slice 3 lands.
 - **No provider registry or plugin discovery.** Slice 5, and only once
   at least three real providers exist. Slice 2 uses zero concrete
   domain/memory providers — the prompt's own "domain context"/

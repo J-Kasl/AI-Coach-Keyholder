@@ -8,9 +8,9 @@ from pathlib import Path
 from application.models import IncomingMessage
 from application.service import ApplicationService
 from conversation_engine.engine import ConversationEngine
-from conversation_engine.recent_history import TransitionalRecentMessageBuffer
 from conversation_engine.subject_queue import SubjectConversationQueue
 from infrastructure.database import Database as CoreDatabase
+from memory_system.working_memory import InMemoryWorkingMemory
 
 FIXED_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
@@ -31,8 +31,9 @@ def _apply_migrations(core: CoreDatabase) -> None:
 
 
 def _engine_with_response(text: str) -> ConversationEngine:
+    wm = InMemoryWorkingMemory(max_exchanges_per_subject=5, max_characters_per_subject=5000)
     return ConversationEngine(
-        model=_FakeModel(text), buffer=TransitionalRecentMessageBuffer(max_exchanges_per_subject=5, max_characters_per_subject=5000),
+        model=_FakeModel(text), working_memory_reader=wm, working_memory_writer=wm,
         queue=SubjectConversationQueue(),
     )
 

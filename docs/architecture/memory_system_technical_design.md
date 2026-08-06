@@ -492,20 +492,24 @@ regardless of how relevant it would otherwise score.
 > `memory_system/README.md` for the exact boundary. What was actually
 > built is a simpler, fully non-persistent
 > `InMemoryWorkingMemory` — a bounded, per-subject, process-lifetime
-> conversation-turn buffer, replacing `conversation_engine`'s own
-> `TransitionalRecentMessageBuffer` in spirit (not yet in code — that
-> wiring is Conversation Engine Slice 3's own future work; the
-> transitional buffer is completely untouched by this slice). This
-> section's own original text below describes reconstructing Working
-> Memory "primarily from the existing `conversation_messages` table"
-> plus a new durable "what is the user in the middle of right now"
-> pointer — **neither of those was built.** The implemented slice is
-> narrower and does not persist anything at all. This document's own
-> global status remains unchanged (`Draft for review, not approved for
-> implementation`) — only this specific, narrower slice has been
-> built; the rest of Working Memory as originally described here, and
-> all four remaining layers, remain entirely unimplemented and
-> unapproved, with persistent memory of any kind additionally blocked
+> conversation-turn buffer. **Conversation Engine Slice 3 has since
+> wired it in** — `conversation_engine`'s own former
+> `TransitionalRecentMessageBuffer` has been removed entirely, and
+> `ConversationEngine` now reads/writes through `InMemoryWorkingMemory`
+> directly (via `WorkingMemoryReader`/`WorkingMemoryWriter`, injected —
+> not through a `ConversationContextProvider`, despite what
+> `conversation_engine_technical_design.md`'s own Slice 3 section
+> originally described). This section's own original text below
+> describes reconstructing Working Memory "primarily from the existing
+> `conversation_messages` table" plus a new durable "what is the user
+> in the middle of right now" pointer — **neither of those was built.**
+> The implemented slice is narrower and does not persist anything at
+> all. This document's own global status remains unchanged (`Draft for
+> review, not approved for implementation`) — only this specific,
+> narrower slice has been built; the rest of Working Memory as
+> originally described here, and all four remaining layers, remain
+> entirely unimplemented and unapproved, with persistent memory of any
+> kind additionally blocked
 > on a privacy/consent design that does not yet exist.
 
 **Responsibility:** the current conversation, the active task (if the

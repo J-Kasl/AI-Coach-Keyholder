@@ -2,24 +2,27 @@
 conversation_engine/prompt_builder.py
 
 Assembles a ModelGenerationRequest from a ResponseContextSnapshot,
-ResponsePlan, and recent history. The system message is produced
-ENTIRELY by deterministic code -- the user's own content is never
-concatenated into it. Role separation (a distinct role="user" message,
-always) is a structural guarantee, not a textual convention: user
-content cannot physically alter the system message, because it never
-occupies the same field.
+ResponsePlan, and Working Memory turns (memory_system.models.WorkingMemoryTurn
+-- immutable types only; this module never imports InMemoryWorkingMemory
+or any other concrete storage implementation). The system message is
+produced ENTIRELY by deterministic code -- the user's own content is
+never concatenated into it. Role separation (a distinct role="user"
+message, always) is a structural guarantee, not a textual convention:
+user content cannot physically alter the system message, because it
+never occupies the same field.
 
 Role separation guarantees that user content cannot physically alter
 the deterministically assembled system message. It does not guarantee
 that the model can never be influenced by malicious user content.
-Slice 2 does not implement a semantic prompt-injection detector.
+Slice 2 does not implement a semantic prompt-injection detector; this
+remains true after Slice 3's own Working Memory integration.
 """
 
 from __future__ import annotations
 
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from conversation_engine.models import ResponseCategory, ResponseContextSnapshot, ResponsePlan
-from conversation_engine.recent_history import ConversationRole, RecentConversationMessage
+from memory_system.models import WorkingMemoryRole, WorkingMemoryTurn
 
 __all__ = ["build_generation_request"]
 
@@ -68,14 +71,14 @@ def _build_system_message(snapshot: ResponseContextSnapshot, plan: ResponsePlan)
 
 def build_generation_request(
     *, snapshot: ResponseContextSnapshot, plan: ResponsePlan,
-    recent_messages: tuple[RecentConversationMessage, ...], max_output_characters: int,
+    working_memory_turns: tuple[WorkingMemoryTurn, ...], max_output_characters: int,
 ) -> ModelGenerationRequest:
     system_text = _build_system_message(snapshot, plan)
     messages: list[ModelMessage] = [ModelMessage(role=ModelMessageRole.SYSTEM, content=system_text)]
 
-    for m in recent_messages:
-        role = ModelMessageRole.USER if m.role == ConversationRole.USER else ModelMessageRole.ASSISTANT
-        messages.append(ModelMessage(role=role, content=m.content))
+    for turn in working_memory_turns:
+        role = ModelMessageRole.USER if turn.role == WorkingMemoryRole.USER else ModelMessageRole.ASSISTANT
+        messages.append(ModelMessage(role=role, content=turn.content))
 
     # The current user message is ALWAYS the last, separate role="user"
     # turn -- never concatenated into the system message above.
