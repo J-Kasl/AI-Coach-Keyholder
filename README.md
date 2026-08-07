@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**869 passing tests** across the whole repository (`pytest`), including
+**894 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -117,6 +117,7 @@ all been confirmed there.
 24. ~~Memory System, non-persistent Working Memory foundation slice only: `WorkingMemoryRole`/`WorkingMemoryTurn`/`WorkingMemorySnapshot`, `WorkingMemoryReader`/`WorkingMemoryWriter` protocols, `InMemoryWorkingMemory` (process-lifetime, per-subject, atomic whole-exchange commit, oldest-whole-exchange trimming, thread-safe, no FIFO of its own)~~ **done** — see `memory_system/README.md` for the exact boundary (no persistence, no migration, all four remaining memory layers still blocked on an unwritten privacy/consent design).
 25. ~~Conversation Engine Slice 3: wired `ConversationEngine` to `memory_system`'s `InMemoryWorkingMemory` via `WorkingMemoryReader`/`WorkingMemoryWriter` (separate, injected dependencies), removed `TransitionalRecentMessageBuffer` entirely, explicit read/write failure policies with distinct log codes for expected vs. unexpected failures~~ **done** — see `conversation_engine/README.md`'s own "Slice 3" section for the exact boundary (same process-lifetime/no-persistence contract as before, mechanical cutover of the same 10-exchange/8000-character limits, no `ConversationContextProvider` integration despite the original design text).
 26. ~~Preference & Limits Profile, Foundation Slice 1 only: pure process-independent domain model (`ProfileOwnerKey`, `ProfileTopicId`, `ProfileDisposition`, `ProfileEntry`, `PreferenceProfileSnapshot`, `TopicState`, `resolve_topic_state()`), at-most-one-active-entry-per-topic cardinality enforced constructionally~~ **done** — see `preference_profile/README.md` for the exact boundary (no repository, no persistence, no import/consent/eligibility integration, no age-gate Protocol, zero runtime wiring anywhere in the project).
+27. ~~First Testable Keyholder Milestone, Slice A — Lock State: user-reported lock status only (`LockReportStatus`, `LockKnowledgeState` with an explicit `UNKNOWN` absence state, `LockReport`), append-only persistence (migration 019) with a deterministic `sequence_number` ordering tiebreaker, governed read/write split (`LockState`/`LockStateAdministration`)~~ **done** — see `lock_state/README.md` for the exact boundary (user-reported only, never a claim of verified physical reality; no Discord commands, no `ApplicationService`/Conversation Engine integration yet).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -409,6 +410,10 @@ preference_profile/  # Foundation Slice 1 only -- pure, process-independent doma
                  # policy); zero runtime wiring anywhere, fail-closed blocked
                  # until a separate age/eligibility design is approved
                  # (see preference_profile/README.md)
+lock_state/      # First Testable Keyholder Milestone, Slice A -- user-reported
+                 # lock status only, never a claim of verified physical reality;
+                 # append-only persistence, no Discord/application/Conversation
+                 # Engine integration yet (see lock_state/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, OnboardingService, CommandRouter, ApplicationService
                  # (see application/README.md)
