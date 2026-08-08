@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from infrastructure.database import Database as CoreDatabase
-from task_catalog.models import TaskInstanceRole
+from task_catalog.models import LockRequirement, TaskInstanceRole
 from task_catalog.repository import (
     InvalidTaskTemplateVersionError,
     TaskCatalog,
@@ -59,7 +59,8 @@ def _create_kwargs(**overrides) -> dict:
         required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
         eligible_instance_roles=(TaskInstanceRole.RECOVERY,), eligible_operating_modes=("standard",),
         completion_requirements={"type": "checkbox"}, verification_requirements={"method": "text"},
-        reflection_requirements=None, created_via_consent_id="consent-1", now=FIXED_TIME,
+        reflection_requirements=None, lock_requirement=LockRequirement.NONE,
+        created_via_consent_id="consent-1", now=FIXED_TIME,
     )
     kwargs.update(overrides)
     return kwargs
@@ -577,6 +578,24 @@ class TestGetTemplate:
         assert catalog.get_template("tmpl-1", 99) is None
 
 
+class TestGetCurrentVersion:
+    def test_returns_none_for_nonexistent_template(self, catalog: TaskCatalog) -> None:
+        assert catalog.get_current_version("does-not-exist") is None
+
+    def test_returns_version_1_right_after_create(self, admin: TaskCatalogAdministration, catalog: TaskCatalog) -> None:
+        admin.create_template(**_create_kwargs())
+        current = catalog.get_current_version("tmpl-1")
+        assert current is not None
+        assert current.version == 1
+
+    def test_add_version_alone_does_not_change_current_version(self, admin: TaskCatalogAdministration, catalog: TaskCatalog) -> None:
+        admin.create_template(**_create_kwargs())
+        admin.add_version("tmpl-1", **{k: v for k, v in _create_kwargs().items() if k not in ("template_id",)})
+        current = catalog.get_current_version("tmpl-1")
+        assert current is not None
+        assert current.version == 1  # add_version() alone never advances current_version
+
+
 class TestTaskCatalogHasNoWriteCapability:
     """TC-4, verified structurally, not only by documentation."""
 
@@ -590,10 +609,10 @@ class TestTaskCatalogHasNoWriteCapability:
         assert not hasattr(catalog, "activate")
         assert not hasattr(catalog, "deactivate")
 
-    def test_only_the_two_documented_public_methods_exist(self, catalog: TaskCatalog) -> None:
+    def test_only_the_three_documented_public_methods_exist(self, catalog: TaskCatalog) -> None:
         public_methods = {name for name in dir(catalog) if not name.startswith("_")}
         # db_path is a plain attribute, not a method -- included since dir() doesn't distinguish
-        assert public_methods == {"get_template", "get_active_templates", "db_path"}
+        assert public_methods == {"get_template", "get_active_templates", "get_current_version", "db_path"}
 
 
 class TestConcurrentAddVersion:

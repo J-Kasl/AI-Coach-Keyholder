@@ -9,10 +9,22 @@ change that document's own status).
 ## What is implemented here
 
 - **`task_catalog/models.py`** — `TaskInstanceRole`,
-  `TaskTemplateEligibilityStatus`, `TaskTemplateVersion` (append-only,
-  `frozen=True`), `TaskTemplateCatalogEntry` (mutable current-state
-  pointer). Directly mirrors `goal_management`'s own `Goal`/`GoalVersion`
-  split — see the design document's own Section 2 for why.
+  `TaskTemplateEligibilityStatus`, `LockRequirement`,
+  `TaskTemplateVersion` (append-only, `frozen=True`),
+  `TaskTemplateCatalogEntry` (mutable current-state pointer). Directly
+  mirrors `goal_management`'s own `Goal`/`GoalVersion` split — see the
+  design document's own Section 2 for why.
+
+  **`lock_requirement` (added for Task Runtime Slice B)** — owned here,
+  not in `task_runtime`, because it is a property of the versioned
+  DEFINITION (the same kind of field as `required_equipment`/
+  `safety_classification`), never of a specific user's assignment.
+  Changing it creates a new template version, exactly like any other
+  field on `TaskTemplateVersion` — it never retroactively changes the
+  meaning of a historical assignment (`task_runtime`'s own composite
+  foreign key pins an assignment to the exact version it was created
+  against). See `task_runtime/README.md` for the eligibility logic
+  that actually reads this field.
 
   **TC-1 (append-only) is an application-enforced invariant today, not
   a database-enforced one** — verified directly, not assumed: a raw SQL

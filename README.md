@@ -62,7 +62,7 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**894 passing tests** across the whole repository (`pytest`), including
+**933 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
@@ -118,6 +118,7 @@ all been confirmed there.
 25. ~~Conversation Engine Slice 3: wired `ConversationEngine` to `memory_system`'s `InMemoryWorkingMemory` via `WorkingMemoryReader`/`WorkingMemoryWriter` (separate, injected dependencies), removed `TransitionalRecentMessageBuffer` entirely, explicit read/write failure policies with distinct log codes for expected vs. unexpected failures~~ **done** — see `conversation_engine/README.md`'s own "Slice 3" section for the exact boundary (same process-lifetime/no-persistence contract as before, mechanical cutover of the same 10-exchange/8000-character limits, no `ConversationContextProvider` integration despite the original design text).
 26. ~~Preference & Limits Profile, Foundation Slice 1 only: pure process-independent domain model (`ProfileOwnerKey`, `ProfileTopicId`, `ProfileDisposition`, `ProfileEntry`, `PreferenceProfileSnapshot`, `TopicState`, `resolve_topic_state()`), at-most-one-active-entry-per-topic cardinality enforced constructionally~~ **done** — see `preference_profile/README.md` for the exact boundary (no repository, no persistence, no import/consent/eligibility integration, no age-gate Protocol, zero runtime wiring anywhere in the project).
 27. ~~First Testable Keyholder Milestone, Slice A — Lock State: user-reported lock status only (`LockReportStatus`, `LockKnowledgeState` with an explicit `UNKNOWN` absence state, `LockReport`), append-only persistence (migration 019) with a deterministic `sequence_number` ordering tiebreaker, governed read/write split (`LockState`/`LockStateAdministration`)~~ **done** — see `lock_state/README.md` for the exact boundary (user-reported only, never a claim of verified physical reality; no Discord commands, no `ApplicationService`/Conversation Engine integration yet).
+28. ~~First Testable Keyholder Milestone, Slice B — Task Runtime: `TaskAssignment` lifecycle (`ACTIVE`/`COMPLETED`/`CANCELLED`), authoritative eligibility enforcement re-derived inside `assign_task()` itself (never trusting a caller-supplied decision), database-level composite foreign key pinning an assignment to its exact immutable template version, database-level partial unique index enforcing at-most-one-active-assignment-per-user; `task_catalog`'s own new `LockRequirement`/`lock_requirement` field and `get_current_version()` read method~~ **done** — see `task_runtime/README.md` for the exact boundary (lock-state eligibility dimension only, no selection algorithm, no Discord/Conversation Engine integration yet).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -414,6 +415,11 @@ lock_state/      # First Testable Keyholder Milestone, Slice A -- user-reported
                  # lock status only, never a claim of verified physical reality;
                  # append-only persistence, no Discord/application/Conversation
                  # Engine integration yet (see lock_state/README.md)
+task_runtime/    # First Testable Keyholder Milestone, Slice B -- what was
+                 # assigned to a specific user and its lifecycle; authoritative
+                 # eligibility enforcement, database-level composite FK and
+                 # partial unique index; no selection algorithm, no Discord/
+                 # Conversation Engine integration yet (see task_runtime/README.md)
 application/     # channel-agnostic application layer: IncomingMessage/OutgoingMessage,
                  # UserService, OnboardingService, CommandRouter, ApplicationService
                  # (see application/README.md)

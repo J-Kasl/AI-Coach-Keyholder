@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 
 from task_catalog.models import (
+    LockRequirement,
     TaskInstanceRole,
     TaskTemplateCatalogEntry,
     TaskTemplateEligibilityStatus,
@@ -23,7 +24,8 @@ def _version(**overrides) -> TaskTemplateVersion:
         duration_minutes=10, required_equipment=(), required_privacy="none", required_context="home",
         safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.RECOVERY,),
         eligible_operating_modes=("standard",), completion_requirements={}, verification_requirements={},
-        reflection_requirements=None, created_at=FIXED_TIME, created_via_consent_id="consent-1",
+        reflection_requirements=None, lock_requirement=LockRequirement.NONE,
+        created_at=FIXED_TIME, created_via_consent_id="consent-1",
     )
     kwargs.update(overrides)
     return TaskTemplateVersion(**kwargs)

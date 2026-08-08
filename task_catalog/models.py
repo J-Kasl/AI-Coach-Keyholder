@@ -45,6 +45,26 @@ class TaskTemplateEligibilityStatus(StrEnum):
     DEACTIVATED = "deactivated"
 
 
+class LockRequirement(StrEnum):
+    """
+    Owned here, in task_catalog, deliberately -- not in task_runtime.
+    Lock requirement is a property of the task DEFINITION (the same
+    kind of field as required_equipment/safety_classification), never
+    of a specific user's assignment. Ownership here keeps the
+    dependency direction one-way: task_runtime -> task_catalog, never
+    the reverse (task_catalog must never import task_runtime).
+
+    Only two values in this slice -- no physical-verification
+    semantics are implied; REQUIRES_LOCKED means "requires
+    LockKnowledgeState.LOCKED_USER_REPORTED", the existing
+    user-reported epistemic state, nothing stronger. Preference/limits,
+    Chaster, and other eligibility dimensions are deliberately not
+    represented here yet.
+    """
+    NONE = "none"
+    REQUIRES_LOCKED = "requires_locked"
+
+
 @dataclass(frozen=True, kw_only=True)
 class TaskTemplateVersion:
     """
@@ -71,6 +91,7 @@ class TaskTemplateVersion:
     completion_requirements: dict
     verification_requirements: dict
     reflection_requirements: dict | None
+    lock_requirement: LockRequirement
     created_at: datetime
     created_via_consent_id: str   # governance (TC-4): never created without one
 

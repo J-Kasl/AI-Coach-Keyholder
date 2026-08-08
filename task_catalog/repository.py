@@ -40,6 +40,7 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 from task_catalog.models import (
+    LockRequirement,
     TaskInstanceRole,
     TaskTemplateCatalogEntry,
     TaskTemplateEligibilityStatus,
@@ -91,6 +92,7 @@ def _row_to_version(row) -> TaskTemplateVersion:
         reflection_requirements=(
             json.loads(row["reflection_requirements_json"]) if row["reflection_requirements_json"] is not None else None
         ),
+        lock_requirement=LockRequirement(row["lock_requirement"]),
         created_at=_parse_iso(row["created_at"]), created_via_consent_id=row["created_via_consent_id"],
     )
 
@@ -120,8 +122,8 @@ def _insert_version(tx: Transaction, version: TaskTemplateVersion) -> None:
              required_equipment_json, required_privacy, required_context, safety_classification,
              eligible_instance_roles_json, eligible_operating_modes_json,
              completion_requirements_json, verification_requirements_json, reflection_requirements_json,
-             created_at, created_via_consent_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             lock_requirement, created_at, created_via_consent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             version.id, version.template_id, version.version, version.category, version.difficulty,
@@ -132,6 +134,7 @@ def _insert_version(tx: Transaction, version: TaskTemplateVersion) -> None:
             json.dumps(list(version.eligible_operating_modes)),
             json.dumps(version.completion_requirements), json.dumps(version.verification_requirements),
             json.dumps(version.reflection_requirements) if version.reflection_requirements is not None else None,
+            version.lock_requirement.value,
             _iso(version.created_at), version.created_via_consent_id,
         ),
     )
@@ -161,6 +164,25 @@ class TaskCatalog:
             row = tx.fetch_one(
                 "SELECT * FROM task_template_versions WHERE template_id = ? AND version = ?",
                 (template_id, version),
+            )
+        return _row_to_version(row) if row is not None else None
+
+    def get_current_version(self, template_id: str) -> TaskTemplateVersion | None:
+        """The template's current version, per its own
+        TaskTemplateCatalogEntry.current_version pointer -- `None` if
+        no entry exists for this template_id at all. Added for
+        task_runtime's own benefit (resolving which version to assign)
+        -- a small, read-only addition, no change to TC-1/TC-2's own
+        governance model."""
+        with self._core.transaction() as tx:
+            row = tx.fetch_one(
+                """
+                SELECT v.* FROM task_template_versions v
+                JOIN task_template_catalog_entries e
+                    ON e.template_id = v.template_id AND e.current_version = v.version
+                WHERE v.template_id = ?
+                """,
+                (template_id,),
             )
         return _row_to_version(row) if row is not None else None
 
@@ -223,6 +245,7 @@ class TaskCatalogAdministration:
         safety_classification: str, eligible_instance_roles: tuple[TaskInstanceRole, ...],
         eligible_operating_modes: tuple[str, ...], completion_requirements: dict,
         verification_requirements: dict, reflection_requirements: dict | None,
+        lock_requirement: LockRequirement,
         created_via_consent_id: str, now: datetime,
     ) -> TaskTemplateVersion:
         """
@@ -255,6 +278,7 @@ class TaskCatalogAdministration:
                 safety_classification=safety_classification, eligible_instance_roles=eligible_instance_roles,
                 eligible_operating_modes=eligible_operating_modes, completion_requirements=completion_requirements,
                 verification_requirements=verification_requirements, reflection_requirements=reflection_requirements,
+                lock_requirement=lock_requirement,
                 created_at=now, created_via_consent_id=created_via_consent_id,
             )
             _insert_version(tx, version)
@@ -281,6 +305,7 @@ class TaskCatalogAdministration:
         safety_classification: str, eligible_instance_roles: tuple[TaskInstanceRole, ...],
         eligible_operating_modes: tuple[str, ...], completion_requirements: dict,
         verification_requirements: dict, reflection_requirements: dict | None,
+        lock_requirement: LockRequirement,
         created_via_consent_id: str, now: datetime,
     ) -> TaskTemplateVersion:
         """
@@ -313,6 +338,7 @@ class TaskCatalogAdministration:
                 safety_classification=safety_classification, eligible_instance_roles=eligible_instance_roles,
                 eligible_operating_modes=eligible_operating_modes, completion_requirements=completion_requirements,
                 verification_requirements=verification_requirements, reflection_requirements=reflection_requirements,
+                lock_requirement=lock_requirement,
                 created_at=now, created_via_consent_id=created_via_consent_id,
             )
             _insert_version(tx, version)
