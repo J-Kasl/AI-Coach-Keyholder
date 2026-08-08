@@ -73,12 +73,23 @@ never a raw Discord identifier.
 - Read methods (`get_current_report`, `get_current_knowledge_state`)
   never write anything, under any circumstance.
 
+## What is implemented here — Slice C addition
+
+**`lock status`/`lock report locked`/`lock report unlocked`** are now
+wired into `application/service.py` — `LockState`/`LockStateAdministration`
+constructed directly inside `ApplicationService.__init__`, the same
+pattern `advanced_mode` already uses. `lock` is its own command family
+(`register_family`) — an invalid `lock ...` input gets a deterministic
+family reply, never falling through to Conversation Engine. See
+`application/README.md` for the full command surface and its own
+verified invariants.
+
 ## What is explicitly NOT implemented — still draft, still open
 
-- **No Discord commands, no `ApplicationService` integration.** After
-  this slice, nothing new is user-accessible through Discord at all.
 - **No `ConversationContextProvider`, no Conversation Engine wiring.**
-  The engine does not know this module exists yet.
+  The engine does not know this module exists yet -- `lock status`/
+  `lock report ...` are deterministic commands, fully separate from
+  the model-generated conversational path.
 - **No external/hardware verification of any kind.** This module's
   entire epistemic ceiling is "what the user said" — nothing more.
 - **No Chaster or any other external provider integration.** A future,

@@ -61,20 +61,35 @@ class TestNoForbiddenImports:
         assert offending == []
 
 
-class TestNoOtherPackageImportsLockStateYet:
-    def test_no_existing_package_references_lock_state(self) -> None:
+class TestApplicationServiceIsTheOnlyApprovedImporter:
+    """application/service.py (First Testable Keyholder Milestone,
+    Slice C) is the ONE approved integration point -- constructed the
+    same way advanced_mode is, directly inside ApplicationService.__init__,
+    not via DI from bot/discord_bot.py's own composition root. No other
+    file anywhere may import lock_state."""
+
+    def test_no_other_file_references_lock_state(self) -> None:
         checked_packages = [
             "application", "bot", "conversation_engine", "memory_system", "preference_profile",
             "trust_manager", "penalty_engine", "recovery_plan", "goal_management",
             "task_catalog", "advanced_mode", "infrastructure", "ai",
         ]
+        allowed_application_files = {"service.py"}
         offending: list[str] = []
         for package in checked_packages:
             package_dir = PROJECT_ROOT / package
             if not package_dir.is_dir():
                 continue
             for py_file in package_dir.rglob("*.py"):
+                if package == "application" and py_file.name in allowed_application_files:
+                    continue
                 names = _imported_module_names(py_file)
                 if any(n == "lock_state" or n.startswith("lock_state.") for n in names):
                     offending.append(str(py_file.relative_to(PROJECT_ROOT)))
         assert offending == []
+
+    def test_service_py_does_in_fact_import_lock_state(self) -> None:
+        """Positive proof the approved integration actually exists."""
+        service_py = PROJECT_ROOT / "application" / "service.py"
+        names = _imported_module_names(service_py)
+        assert any(n == "lock_state" or n.startswith("lock_state.") for n in names)

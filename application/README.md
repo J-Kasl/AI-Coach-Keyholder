@@ -114,7 +114,43 @@ fallback.
   shows a completed user's saved language/AI voice/personality),
   `mode`/`mode status`/`mode request advanced`/`mode request standard`/
   `mode cancel`/`mode confirm` (Advanced Mode's two-stage transition,
-  now reachable from Discord — see below).
+  now reachable from Discord — see below), `lock status`/
+  `lock report locked`/`lock report unlocked`, `task request`/
+  `task active`/`task complete`/`task cancel` (First Testable Keyholder
+  Milestone, Slice C — see below).
+- **First Testable Keyholder Milestone, Slice C.** `LockState`/
+  `LockStateAdministration`/`TaskCatalog`/`TaskRuntime`/
+  `TaskRuntimeAdministration` are constructed directly inside
+  `ApplicationService.__init__`, the same pattern `advanced_mode`
+  already uses (`self.db_path`/`self._core`, no DI from
+  `bot/discord_bot.py`'s own composition root — that DI pattern
+  remains specific to `conversation_engine`, which has a genuine
+  external dependency, Ollama, the others don't). `lock`/`task` are
+  each their own command family (`register_family`, the same pattern
+  `mode` already established) — an invalid `lock ...`/`task ...`
+  input gets a deterministic family reply, never falling through to
+  Conversation Engine. `task request` reads the current
+  `LockKnowledgeState`, filters eligible templates via
+  `TaskRuntime.get_eligible_templates()`, and picks one
+  deterministically (`task_runtime.selection.select_eligible_template()`
+  — lowest `template_id`, alphabetically; neither `get_active_templates()`
+  nor `get_eligible_templates()` carries an explicit `ORDER BY`, so this
+  ordering is imposed in Python, not assumed from the query). Every
+  `TaskAssignment*Error`/`TaskNotEligibleError` gets its own specific
+  `except` clause mapped to a safe, generic reply — the same
+  discipline `mode`'s own handlers already use, never a raw exception
+  message reaching the user. **Verified directly, not just claimed:**
+  known `lock`/`task` commands never invoke the model at all; ordinary
+  conversational text mentioning lock/task-like intent (e.g. "I'm
+  locked right now", "I finished it") never creates a `lock_reports`
+  row or resolves a `task_assignments` row; a deterministic command's
+  own reply text never enters Working Memory (`tests/application/
+  test_lock_task_conversation_boundary.py`). `scripts/seed_development_tasks.py`
+  is a separate, explicitly-invoked, idempotent maintenance script
+  (`python3 -m scripts.seed_development_tasks`) — deliberately not
+  wired into `bot/discord_bot.py`'s own startup (which never creates
+  domain data today) and not a migration (schema only, per this
+  project's own convention).
 - **Advanced Mode's transition process, wired end-to-end from Discord
   DM to `advanced_mode`'s own persisted state and back.** No new
   natural-language parsing — each `mode ...` command is registered as

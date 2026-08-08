@@ -43,9 +43,24 @@ from conversation_engine.models import UnknownIdentityError
 from application.user_service import UserService
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
+from lock_state.models import LockKnowledgeState, LockReportStatus
+from lock_state.repository import LockState, LockStateAdministration
 from penalty_engine.repository import PenaltyEngine
 from penalty_engine.window import remaining_active_hours, target_active_hours
 from recovery_plan.repository import RecoveryPlanManager
+from task_catalog.models import TaskInstanceRole
+from task_catalog.repository import TaskCatalog
+from task_runtime.repository import (
+    TaskAssignmentConcurrencyError,
+    TaskAssignmentNotFoundError,
+    TaskAssignmentReferentialIntegrityError,
+    TaskAssignmentTransitionError,
+    TaskNotEligibleError,
+    TaskRuntime,
+    TaskRuntimeAdministration,
+    TaskTemplateNotFoundForAssignmentError,
+)
+from task_runtime.selection import select_eligible_template
 from trust_manager.repository import TrustManager
 
 logger = logging.getLogger("ai_coach_keyholder.application")
@@ -68,6 +83,11 @@ class ApplicationService:
         self.goal_management = GoalManager(self.db_path, core=self._core)
         self.advanced_mode = AdvancedMode(self.db_path, core=self._core)
         self.advanced_mode_admin = AdvancedModeAdministration(self.db_path, core=self._core)
+        self.lock_state = LockState(self.db_path, core=self._core)
+        self.lock_state_admin = LockStateAdministration(self.db_path, core=self._core)
+        self.task_catalog = TaskCatalog(self.db_path, core=self._core)
+        self.task_runtime = TaskRuntime(self.db_path, core=self._core)
+        self.task_runtime_admin = TaskRuntimeAdministration(self.db_path, core=self._core)
 
         self.router = CommandRouter()
         self._register_commands()
@@ -166,6 +186,17 @@ class ApplicationService:
             self._handle_mode_confirm,
         )
         self.router.register_family("mode", invalid_handler=self._handle_mode_invalid)
+
+        self.router.register("lock status", "Show your current reported lock status", self._handle_lock_status)
+        self.router.register("lock report locked", "Report yourself as locked", self._handle_lock_report_locked)
+        self.router.register("lock report unlocked", "Report yourself as unlocked", self._handle_lock_report_unlocked)
+        self.router.register_family("lock", invalid_handler=self._handle_lock_invalid)
+
+        self.router.register("task request", "Request a new eligible task, if you don't already have an active one", self._handle_task_request)
+        self.router.register("task active", "Show your currently active task, if any", self._handle_task_active)
+        self.router.register("task complete", "Mark your active task as completed", self._handle_task_complete)
+        self.router.register("task cancel", "Cancel your active task", self._handle_task_cancel)
+        self.router.register_family("task", invalid_handler=self._handle_task_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())
@@ -417,3 +448,117 @@ class ApplicationService:
             return OutgoingMessage(text="That request isn't ready to confirm right now. Send `mode status` to check.")
 
         return OutgoingMessage(text=f"Confirmed. Your mode is now: {confirmed.target_mode.value}.")
+
+    # -------------------------------------------------------------------
+    # Lock State commands (First Testable Keyholder Milestone, Slice C)
+    # -------------------------------------------------------------------
+
+    def _handle_lock_invalid(self, ctx: RequestContext) -> OutgoingMessage:
+        """The 'lock' command-family invalid_handler -- same pattern as
+        _handle_mode_invalid. Deterministic, never falls through to
+        Conversation Engine."""
+        return OutgoingMessage(
+            text="That's not a recognized `lock` command. Try `lock status`, `lock report locked`, "
+                 "or `lock report unlocked`."
+        )
+
+    def _handle_lock_status(self, ctx: RequestContext) -> OutgoingMessage:
+        state = self.lock_state.get_current_knowledge_state(ctx.user.id)
+        if state == LockKnowledgeState.UNKNOWN:
+            return OutgoingMessage(text="No lock report yet. Send `lock report locked` or `lock report unlocked`.")
+        if state == LockKnowledgeState.LOCKED_USER_REPORTED:
+            return OutgoingMessage(text="Locked (as you reported).")
+        return OutgoingMessage(text="Unlocked (as you reported).")
+
+    def _handle_lock_report_locked(self, ctx: RequestContext) -> OutgoingMessage:
+        return self._report_lock_status(ctx, status=LockReportStatus.LOCKED_USER_REPORTED)
+
+    def _handle_lock_report_unlocked(self, ctx: RequestContext) -> OutgoingMessage:
+        return self._report_lock_status(ctx, status=LockReportStatus.UNLOCKED_USER_REPORTED)
+
+    def _report_lock_status(self, ctx: RequestContext, *, status: LockReportStatus) -> OutgoingMessage:
+        consent_id = self._consent_id_for(ctx)
+        if consent_id is None:
+            return OutgoingMessage(text="Couldn't process that -- no stable message reference was available.")
+        self.lock_state_admin.report_status(
+            user_id=ctx.user.id, status=status, reported_via_consent_id=consent_id, now=ctx.now,
+        )
+        word = "locked" if status == LockReportStatus.LOCKED_USER_REPORTED else "unlocked"
+        return OutgoingMessage(text=f"Recorded: you reported yourself as {word}.")
+
+    # -------------------------------------------------------------------
+    # Task Runtime commands (First Testable Keyholder Milestone, Slice C)
+    # -------------------------------------------------------------------
+
+    def _handle_task_invalid(self, ctx: RequestContext) -> OutgoingMessage:
+        return OutgoingMessage(
+            text="That's not a recognized `task` command. Try `task request`, `task active`, "
+                 "`task complete`, or `task cancel`."
+        )
+
+    def _handle_task_active(self, ctx: RequestContext) -> OutgoingMessage:
+        assignment = self.task_runtime.get_active_assignment(ctx.user.id)
+        if assignment is None:
+            return OutgoingMessage(text="No active task. Send `task request` to get one.")
+        return OutgoingMessage(text=f"Active: {assignment.template_id} (assigned {assignment.assigned_at.isoformat()}).")
+
+    def _handle_task_request(self, ctx: RequestContext) -> OutgoingMessage:
+        consent_id = self._consent_id_for(ctx)
+        if consent_id is None:
+            return OutgoingMessage(text="Couldn't process that -- no stable message reference was available.")
+
+        existing = self.task_runtime.get_active_assignment(ctx.user.id)
+        if existing is not None:
+            return OutgoingMessage(
+                text=f"You already have an active task: {existing.template_id}. "
+                     f"Send `task complete` or `task cancel` first."
+            )
+
+        lock_knowledge_state = self.lock_state.get_current_knowledge_state(ctx.user.id)
+        eligible = self.task_runtime.get_eligible_templates(
+            role=TaskInstanceRole.PRIMARY, operating_mode=self.advanced_mode.get_current_mode().current_mode.value,
+            lock_knowledge_state=lock_knowledge_state,
+        )
+        chosen = select_eligible_template(eligible)
+        if chosen is None:
+            return OutgoingMessage(text="No eligible task available right now.")
+
+        try:
+            assignment = self.task_runtime_admin.assign_task(
+                user_id=ctx.user.id, template_id=chosen.template_id, lock_knowledge_state=lock_knowledge_state,
+                assigned_via_consent_id=consent_id, now=ctx.now,
+            )
+        except TaskNotEligibleError:
+            return OutgoingMessage(text="That task is no longer eligible. Try `task request` again.")
+        except TaskAssignmentConcurrencyError:
+            return OutgoingMessage(text="You already have an active task. Send `task complete` or `task cancel` first.")
+        except TaskAssignmentReferentialIntegrityError:
+            return OutgoingMessage(text="Something went wrong assigning that task. It's been logged.")
+        except TaskTemplateNotFoundForAssignmentError:
+            return OutgoingMessage(text="That task is no longer available. Try `task request` again.")
+
+        return OutgoingMessage(text=f"Assigned: {assignment.template_id}.")
+
+    def _handle_task_complete(self, ctx: RequestContext) -> OutgoingMessage:
+        return self._resolve_task(ctx, resolve=self.task_runtime_admin.complete_task, resolved_text="Completed.")
+
+    def _handle_task_cancel(self, ctx: RequestContext) -> OutgoingMessage:
+        return self._resolve_task(ctx, resolve=self.task_runtime_admin.cancel_task, resolved_text="Cancelled.")
+
+    def _resolve_task(self, ctx: RequestContext, *, resolve, resolved_text: str) -> OutgoingMessage:
+        consent_id = self._consent_id_for(ctx)
+        if consent_id is None:
+            return OutgoingMessage(text="Couldn't process that -- no stable message reference was available.")
+
+        assignment = self.task_runtime.get_active_assignment(ctx.user.id)
+        if assignment is None:
+            return OutgoingMessage(text="No active task to resolve. Send `task request` to get one.")
+
+        try:
+            resolve(assignment_id=assignment.id, resolved_via_consent_id=consent_id, now=ctx.now)
+        except TaskAssignmentTransitionError:
+            return OutgoingMessage(text="That task isn't active anymore. Send `task active` to check.")
+        except TaskAssignmentNotFoundError:
+            return OutgoingMessage(text="Something went wrong resolving that task. It's been logged.")
+
+        return OutgoingMessage(text=resolved_text)

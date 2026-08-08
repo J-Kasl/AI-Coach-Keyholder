@@ -91,13 +91,33 @@ write in this project already uses. **Conversation Engine/LLM has no
 reference to `TaskRuntimeAdministration` at all** — structurally
 impossible for a model's own text to mutate assignment state.
 
+## What is implemented here — Slice C addition
+
+**`selection.py`**: `select_eligible_template()` — a deliberately
+trivial, deterministic placeholder (lowest `template_id`,
+alphabetically), not scoring/ranking. Neither `get_active_templates()`
+nor `get_eligible_templates()` carries an explicit `ORDER BY`, so this
+function imposes a stable order in Python rather than assuming one
+from either existing, already-tested SQL query. `application/service.py`
+now constructs `TaskCatalog`/`TaskRuntime`/`TaskRuntimeAdministration`
+directly inside `ApplicationService.__init__` — the same pattern
+`advanced_mode` already uses — and wires `task request`/`task active`/
+`task complete`/`task cancel` (plus the `task` command family) end to
+end. See `application/README.md` for the full command surface and its
+own verified invariants (known commands never reach the model,
+ordinary text never writes domain state, deterministic replies never
+enter Working Memory).
+
 ## What is explicitly NOT implemented — still draft, still open
 
-- **No Discord commands, no `ApplicationService` integration.**
 - **No `ConversationContextProvider`, no Conversation Engine wiring.**
-- **No selection algorithm.** `assign_task()` takes an explicit
-  `template_id` — random/weighted/personality-driven selection among
-  eligible templates is a future slice's own work.
+  `task request`/`task active`/etc. are deterministic commands, fully
+  separate from the model-generated conversational path — Conversation
+  Engine still has no reference to `TaskRuntime`/`TaskRuntimeAdministration`
+  at all.
+- **No real selection algorithm.** `select_eligible_template()` is a
+  fixed, trivial placeholder — random/weighted/personality-driven
+  selection among eligible templates is a future slice's own work.
 - **No preference/limits eligibility dimension.** Only
   `LockRequirement` exists in this slice.
 - **No Chaster or any other external provider integration.**
