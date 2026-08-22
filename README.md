@@ -70,8 +70,8 @@ every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
 form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
 in `trust_manager/README.md` and `penalty_engine/README.md`).
 
-Eighteen sequential database migrations are applied so far
-(`database/migrations/001` through `018`), covering the initial Phase 0
+Twenty sequential database migrations are applied so far
+(`database/migrations/001` through `020`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -79,8 +79,13 @@ layer's user identity bookkeeping, the plugin infrastructure's own
 scoped migration tracking, Discord onboarding/user preferences, (014)
 the Task Catalog reference layer, (015/016) its consent/timestamp
 audit columns, (017) Advanced Mode's `OperatingMode` singleton and
-two-stage transition process, and (018) its `INVALIDATED` status
-(a `source_mode` mismatch found under direct review). See
+two-stage transition process, (018) its `INVALIDATED` status
+(a `source_mode` mismatch found under direct review), (019) Lock
+State's append-only, user-reported `lock_reports` table, and (020)
+Task Runtime's `task_assignments` table (a database-level composite
+foreign key to `task_template_versions` plus a partial unique index
+enforcing at most one active assignment per user) together with Task
+Catalog's own new `lock_requirement` column. See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -146,17 +151,31 @@ as a whole remains draft, not approved for implementation** — only the
 specific slice `task_catalog/README.md` itself describes has actually
 been built; item 19 above).
 
-**2. Approved, but deliberately deferred:** transaction-aware SDK read
-methods (`plugin_architecture_proposal.md` v1.5 Section 26 Open
-Question 6 — the direction is decided, the implementation is not yet
-built; still not started).
-
 **3. Drafts awaiting their own separate approval — not a queue of
 what gets built next:**
+- [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
+  (v1.5) — **draft architectural proposal, NOT approved for
+  implementation as a whole** (the document's own header: *"No code
+  implemented or modified"* — a description of the document itself,
+  not of what has since been built around it), *except* for Steps 1–3
+  (registry, event bus, DI, permissions, config, fault isolation),
+  implemented — see `infrastructure/README.md`. Section 26's own Open
+  Question 6 (transaction-aware SDK read methods) has a **decided
+  direction, not yet built** — explicit `_in_transaction`-suffixed
+  read method variants, mirroring `publish_event`/
+  `publish_event_in_transaction` — the document's own v1.5 note
+  records that direction but explicitly changed no code doing so.
 - [`docs/architecture/memory_system_technical_design.md`](docs/architecture/memory_system_technical_design.md)
-  (v1.4) — **draft, NOT approved for implementation.** The five memory
-  layers, a single-source-of-truth table per information category, an
-  explicit ownership model. Implementation not started, not queued.
+  (v1.4) — **draft, NOT approved for implementation as a whole**,
+  *except* for the non-persistent Working Memory foundation slice
+  `memory_system/README.md` describes (item 24 above) — process-lifetime,
+  per-subject, in-memory only, now wired into Conversation Engine
+  Slice 3 (item 25 above). The five memory layers as a whole, a
+  single-source-of-truth table per information category, an explicit
+  ownership model, and any persistent memory of any kind remain fully
+  open, unimplemented, and unapproved — persistent memory specifically
+  blocked on a privacy/consent design that does not yet exist (see
+  `memory_system/README.md`'s own audit).
 - [`docs/architecture/relationship_decision_engine_technical_design.md`](docs/architecture/relationship_decision_engine_technical_design.md)
   (v1.1) — **draft, NOT approved for implementation.** How Domain
   State becomes one unified `Decision`, via a Relationship Engine
@@ -184,15 +203,55 @@ what gets built next:**
   (v1.0) — **draft, NOT approved for implementation as a whole**,
   *except* for the specific catalog-layer slice `task_catalog/README.md`
   describes (TC-1/TC-2/TC-4/TC-8's data shapes) — approved and
-  implemented for exactly that slice, item 19 above. Everything else
-  in the document (which future domain owns each `TaskInstanceRole`,
-  whether a Task Runtime should ever exist, `SourceReference`,
-  `binding_conditions_snapshot`) remains fully open, unimplemented,
-  and unassigned.
+  implemented for exactly that slice, item 19 above. Since extended,
+  as part of item 28 (First Testable Keyholder Milestone, Slice B):
+  `TaskTemplateVersion`'s own new `LockRequirement`/`lock_requirement`
+  field (owned here, not in `task_runtime`, per that slice's own
+  ownership rationale) and `TaskCatalog.get_current_version()` — see
+  `task_runtime/README.md` for why. Everything else in the document
+  (which future domain owns each `TaskInstanceRole`, whether a Task
+  Runtime beyond Slice B's own minimal lifecycle should ever exist,
+  `SourceReference`, `binding_conditions_snapshot`) remains fully
+  open, unimplemented, and unassigned.
+- [`docs/architecture/conversation_engine_technical_design.md`](docs/architecture/conversation_engine_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for Slices 1 through 3 specifically (runtime types and
+  deterministic safety shell, Ollama-backed ordinary conversation for
+  unmatched text only, Working Memory integration — items 22, 23, and
+  25 above). Slices 4 through 6 (structured domain facts/governance
+  explanations, provider registration maturity, a governed Tool
+  Interface) remain fully open, unimplemented, and unapproved — see
+  `conversation_engine/README.md` for the exact, currently-true
+  boundary of what Slices 1–3 actually cover.
+- [`docs/architecture/preference_limits_profile_technical_design.md`](docs/architecture/preference_limits_profile_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for the pure, process-independent Foundation Slice 1
+  `preference_profile/README.md` describes (item 26 above) — zero
+  runtime wiring anywhere in the project, fail-closed blocked from any
+  user-accessible integration until a separately approved
+  age/eligibility design exists. Everything past Foundation Slice 1
+  (an in-memory repository, import/consent/eligibility integration)
+  remains fully open, unimplemented, and unapproved.
+- [`docs/architecture/lock_state_technical_design.md`](docs/architecture/lock_state_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for the Foundation Slice `lock_state/README.md` describes
+  (user-reported lock status only, never a claim of verified physical
+  reality — item 27 above), now wired into Discord as part of item 29.
+  Any external/hardware verification or provider integration (e.g. a
+  Chaster-style platform) remains fully open, unimplemented, and
+  unapproved.
+- [`docs/architecture/task_runtime_technical_design.md`](docs/architecture/task_runtime_technical_design.md)
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for Slice B `task_runtime/README.md` describes (`TaskAssignment`
+  lifecycle, authoritative eligibility enforcement, database-level
+  composite FK and partial unique index — item 28 above), now wired
+  into Discord as part of item 29. Selection/ranking beyond the
+  current deterministic placeholder, the preference/limits eligibility
+  dimension, Conversation Context integration, and any external
+  provider integration remain fully open, unimplemented, and
+  unapproved.
 
-**Already approved and implemented, not drafts:**
-[`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
-(v1.5, Steps 1–3 done — see `infrastructure/README.md`) and
+**Already approved and implemented, not a draft:**
 [`docs/architecture/user_onboarding_technical_design.md`](docs/architecture/user_onboarding_technical_design.md)
 (v1.0, done in full — see its own Section 9).
 
