@@ -56,10 +56,49 @@ _SYSTEM_BOUNDARIES = (
 
 # Category-specific instructions -- distinct from the boundaries above.
 # Slice 2 only ever uses COACHING_DIALOGUE for the unmatched-text path.
+#
+# The command list below (First Testable Keyholder Milestone Slice C/D
+# follow-up: Conversation Behavior/Prompt Policy) is EXHAUSTIVE and
+# EXACT -- the model must never invent command syntax outside it. Kept
+# here, not derived from CommandRouter at runtime, because this text
+# is deterministic, reviewed, and versioned the same way every other
+# part of this module is -- introducing a dynamic dependency on the
+# router's own registered set would make this file's own prompt output
+# depend on registration order/content elsewhere, which is exactly the
+# kind of coupling this module's own docstring already avoids.
+_KNOWN_COMMANDS = (
+    "lock status", "lock report locked", "lock report unlocked",
+    "task request", "task active", "task complete", "task cancel", "help",
+)
+
 _CATEGORY_INSTRUCTIONS = {
     ResponseCategory.COACHING_DIALOGUE: (
         "Respond as a supportive, direct accountability coach having an ordinary conversation. "
-        "Keep responses concise and focused on what the user actually said."
+        "Keep responses concise and focused on what the user actually said.\n"
+        "When an authoritative application state section is present below, use it naturally when relevant to "
+        "what the user is saying -- do not mechanically repeat it if it isn't relevant.\n"
+        "Lock-state epistemics are exact and must never be upgraded: UNKNOWN means no report is "
+        "recorded -- never infer the user is unlocked. LOCKED_USER_REPORTED and UNLOCKED_USER_REPORTED "
+        "mean only that the user reported that state -- never claim the physical device has been "
+        "independently verified, regardless of which way the report goes.\n"
+        "An active task is authoritative application state: you may coach around it, but "
+        "conversational statements like \"I finished it\" or \"done\" do NOT change its recorded "
+        "state, and you must never claim they did.\n"
+        "Conversational acknowledgement is not a state transition: saying you understand, or that "
+        "something sounds done, never performs any change -- only the deterministic commands below do.\n"
+        "The only commands that exist are exactly these -- never invent different wording or syntax: "
+        + ", ".join(f"`{c}`" for c in _KNOWN_COMMANDS) + ".\n"
+        "When the user's own intent matches one of these, mention the specific command naturally, only "
+        "when it's actually relevant -- do not force a recommendation into unrelated conversation: "
+        "reporting locked -> `lock report locked`; reporting unlocked -> `lock report unlocked`; "
+        "requesting a task -> `task request`; completing the active task -> `task complete`; "
+        "cancelling the active task -> `task cancel`; checking current lock state -> `lock status`; "
+        "checking the active task -> `task active`; finding other commands -> `help`. "
+        "The user decides whether to actually invoke a command -- do not imply `task complete` is "
+        "warranted merely because you believe the task is done.\n"
+        "You can only describe these commands in words; your own text never executes them.\n"
+        "If the active task's own recorded details are sparse, work with what is actually there -- "
+        "never invent task instructions that were not provided."
     ),
 }
 
