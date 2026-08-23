@@ -13,12 +13,9 @@ from __future__ import annotations
 
 from ai.identity_catalog import CommunicationProfile
 from conversation_engine.models import ResponseCategory, ResponseContextSnapshot, ResponsePlan, SituationalConstraints
-from conversation_engine.prompt_builder import build_generation_request
+from conversation_engine.prompt_builder import KEYHOLDER_COMMAND_GUIDANCE, build_generation_request
 
-_KNOWN_COMMANDS = (
-    "lock status", "lock report locked", "lock report unlocked",
-    "task request", "task active", "task complete", "task cancel", "help",
-)
+_KNOWN_COMMANDS = KEYHOLDER_COMMAND_GUIDANCE
 
 
 def _profile(**overrides) -> CommunicationProfile:

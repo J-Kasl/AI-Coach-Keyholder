@@ -31,11 +31,14 @@ guessed at.
 
 from __future__ import annotations
 
+import json
+from types import MappingProxyType
+
 from conversation_engine.model_types import ModelGenerationRequest, ModelMessage, ModelMessageRole
 from conversation_engine.models import ResponseCategory, ResponseContextSnapshot, ResponsePlan
 from memory_system.models import WorkingMemoryRole, WorkingMemoryTurn
 
-__all__ = ["build_generation_request"]
+__all__ = ["build_generation_request", "KEYHOLDER_COMMAND_GUIDANCE"]
 
 # Section "Conversation Engine MUST NOT" (conversation_engine_technical_design.md
 # CE-11 through CE-19), folded into the system message's own first layer
@@ -66,7 +69,14 @@ _SYSTEM_BOUNDARIES = (
 # router's own registered set would make this file's own prompt output
 # depend on registration order/content elsewhere, which is exactly the
 # kind of coupling this module's own docstring already avoids.
-_KNOWN_COMMANDS = (
+#
+# Public (not `_`-prefixed) so a contract test can import this single
+# curated tuple directly, instead of maintaining a third, independently
+# hand-typed copy of the same eight strings -- see
+# tests/application/test_prompt_command_contract.py. Still never
+# imported BY application/CommandRouter -- the dependency direction
+# stays conversation_engine -> (nothing), test-only reverse direction.
+KEYHOLDER_COMMAND_GUIDANCE = (
     "lock status", "lock report locked", "lock report unlocked",
     "task request", "task active", "task complete", "task cancel", "help",
 )
@@ -87,7 +97,7 @@ _CATEGORY_INSTRUCTIONS = {
         "Conversational acknowledgement is not a state transition: saying you understand, or that "
         "something sounds done, never performs any change -- only the deterministic commands below do.\n"
         "The only commands that exist are exactly these -- never invent different wording or syntax: "
-        + ", ".join(f"`{c}`" for c in _KNOWN_COMMANDS) + ".\n"
+        + ", ".join(f"`{c}`" for c in KEYHOLDER_COMMAND_GUIDANCE) + ".\n"
         "When the user's own intent matches one of these, mention the specific command naturally, only "
         "when it's actually relevant -- do not force a recommendation into unrelated conversation: "
         "reporting locked -> `lock report locked`; reporting unlocked -> `lock report unlocked`; "
@@ -115,6 +125,37 @@ def _render_lock_state(data: object) -> str:
     return f"Lock: {data['status']}. {data['note']}"
 
 
+def _to_plain_data(value: object) -> object:
+    """
+    Prompt-output serialization boundary only -- converts
+    ConversationContextFragment's own recursively-frozen data
+    (models.py's `_freeze()`: MappingProxyType/tuple/frozenset) into
+    plain, JSON-serializable Python types (dict/list). Never mutates
+    the original frozen fragment.data itself -- this always builds a
+    NEW derived structure, purely for rendering into prompt text.
+    Primitives (str/int/float/bool/bytes/None) pass through unchanged.
+    """
+    if isinstance(value, MappingProxyType):
+        return {k: _to_plain_data(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return [_to_plain_data(v) for v in value]
+    if isinstance(value, frozenset):
+        # frozenset has no defined order -- sort by repr() of the
+        # already-converted plain value for a deterministic prompt
+        # output regardless of set iteration order.
+        return sorted((_to_plain_data(v) for v in value), key=repr)
+    return value
+
+
+def _serialize_for_prompt(value: object) -> str:
+    """Deterministic, human-readable, JSON-based prompt representation
+    -- never a Python repr(), never `mappingproxy(...)`, never a
+    memory address or Python-only wrapper type name. `sort_keys=True`
+    for deterministic dict key ordering; `ensure_ascii=False` so
+    non-ASCII content stays readable rather than \\uXXXX-escaped."""
+    return json.dumps(_to_plain_data(value), sort_keys=True, ensure_ascii=False)
+
+
 def _render_active_task(data: object) -> str:
     if not data["has_active_task"]:
         return "Active task: none."
@@ -122,7 +163,7 @@ def _render_active_task(data: object) -> str:
         f"Active task: template_id={data['template_id']}, version={data['template_version']}, "
         f"category={data['category']}, difficulty={data['difficulty']}, "
         f"duration_minutes={data['duration_minutes']}, "
-        f"completion_requirements={data['completion_requirements']!r}."
+        f"completion_requirements={_serialize_for_prompt(data['completion_requirements'])}."
     )
 
 
