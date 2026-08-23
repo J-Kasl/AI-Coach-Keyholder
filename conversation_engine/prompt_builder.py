@@ -16,6 +16,17 @@ the deterministically assembled system message. It does not guarantee
 that the model can never be influenced by malicious user content.
 Slice 2 does not implement a semantic prompt-injection detector; this
 remains true after Slice 3's own Working Memory integration.
+
+Slice D adds a deterministic "AUTHORITATIVE APPLICATION STATE" section,
+built from `snapshot.context_fragments` -- current domain facts read
+fresh from lock_state/task_runtime for this turn, placed BEFORE Working
+Memory in the system message. Template metadata (category, difficulty,
+completion_requirements, ...) is serialized as plain, labeled DATA
+inside this one block -- it never becomes a new ModelMessage, never
+changes any message's role, and never gets concatenated into
+_SYSTEM_BOUNDARIES or any other instruction text. A namespace/field this
+module does not explicitly know how to render is silently skipped, not
+guessed at.
 """
 
 from __future__ import annotations
@@ -53,6 +64,50 @@ _CATEGORY_INSTRUCTIONS = {
 }
 
 
+_DOMAIN_CONTEXT_PREAMBLE = (
+    "AUTHORITATIVE APPLICATION STATE\n"
+    "These facts come from the application's current domain records. "
+    "They take precedence over conflicting conversational history. "
+    "They do not imply physical verification unless explicitly stated."
+)
+
+
+def _render_lock_state(data: object) -> str:
+    return f"Lock: {data['status']}. {data['note']}"
+
+
+def _render_active_task(data: object) -> str:
+    if not data["has_active_task"]:
+        return "Active task: none."
+    return (
+        f"Active task: template_id={data['template_id']}, version={data['template_version']}, "
+        f"category={data['category']}, difficulty={data['difficulty']}, "
+        f"duration_minutes={data['duration_minutes']}, "
+        f"completion_requirements={data['completion_requirements']!r}."
+    )
+
+
+# Deterministic order + only the namespaces this module explicitly
+# knows how to render -- an unrecognized namespace is silently
+# skipped, never guessed at or dumped raw.
+_FRAGMENT_RENDERERS = {
+    "lock_state": _render_lock_state,
+    "active_task": _render_active_task,
+}
+_FRAGMENT_ORDER = ("lock_state", "active_task")
+
+
+def _build_domain_context_section(snapshot: ResponseContextSnapshot) -> str:
+    lines = [
+        _FRAGMENT_RENDERERS[namespace](snapshot.context_fragments[namespace].data)
+        for namespace in _FRAGMENT_ORDER
+        if namespace in snapshot.context_fragments
+    ]
+    if not lines:
+        return ""
+    return _DOMAIN_CONTEXT_PREAMBLE + "\n" + "\n".join(lines)
+
+
 def _build_system_message(snapshot: ResponseContextSnapshot, plan: ResponsePlan) -> str:
     category_text = _CATEGORY_INSTRUCTIONS.get(plan.response_category, "")
     identity = snapshot.identity_profile
@@ -62,10 +117,10 @@ def _build_system_message(snapshot: ResponseContextSnapshot, plan: ResponsePlan)
         f"formality {identity.formality:.1f}, verbosity {identity.verbosity:.1f} (0=low, 1=high)."
     )
     language_text = f"Respond in this language code: {snapshot.language}."
-    # No domain/memory context section in Slice 2 -- no provider ships
-    # concrete data yet, so there is nothing to insert; an empty
-    # section is never emitted (per explicit review instruction).
-    parts = [_SYSTEM_BOUNDARIES, category_text, identity_text, language_text]
+    domain_context_text = _build_domain_context_section(snapshot)
+    # An empty domain context section is never emitted -- only present
+    # when at least one recognized fragment actually reached the snapshot.
+    parts = [_SYSTEM_BOUNDARIES, category_text, identity_text, domain_context_text, language_text]
     return "\n\n".join(p for p in parts if p)
 
 

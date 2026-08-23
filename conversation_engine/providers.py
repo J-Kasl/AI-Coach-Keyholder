@@ -10,6 +10,15 @@ property and `provide_context()` method satisfies it.
 Slice 1 uses a small, explicit, hand-written list of providers --
 deliberately no dynamic discovery, no registry (Slice 5's own future
 territory, per the design document's roadmap).
+
+Slice D adds `subject_key` as an explicit, per-call parameter --
+providers are stateless, static instances shared across every subject
+the engine ever serves; there is no `self._user_id` or any other
+mutable/thread-local current-subject state anywhere. The same provider
+instance, called concurrently for two different subjects, never leaks
+one subject's data into the other's fragment -- correctness follows
+structurally from `subject_key` being a plain function argument, not
+instance state.
 """
 
 from __future__ import annotations
@@ -41,4 +50,4 @@ class ConversationContextProvider(Protocol):
     @property
     def namespace(self) -> str: ...
 
-    def provide_context(self, *, now: datetime) -> ConversationContextFragment | None: ...
+    def provide_context(self, *, subject_key: str, now: datetime) -> ConversationContextFragment | None: ...

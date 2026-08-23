@@ -120,12 +120,14 @@ fallback.
   Milestone, Slice C — see below).
 - **First Testable Keyholder Milestone, Slice C.** `LockState`/
   `LockStateAdministration`/`TaskCatalog`/`TaskRuntime`/
-  `TaskRuntimeAdministration` are constructed directly inside
-  `ApplicationService.__init__`, the same pattern `advanced_mode`
-  already uses (`self.db_path`/`self._core`, no DI from
-  `bot/discord_bot.py`'s own composition root — that DI pattern
-  remains specific to `conversation_engine`, which has a genuine
-  external dependency, Ollama, the others don't). `lock`/`task` are
+  `TaskRuntimeAdministration` are constructed inside
+  `ApplicationService.__init__` -- `LockStateAdministration`/
+  `TaskRuntimeAdministration` always self-constructed there (never
+  DI'd, never crossing into the Conversation Engine provider graph);
+  `LockState`/`TaskRuntime`/`TaskCatalog` accept new, optional DI
+  parameters as of Slice D -- see below -- with the same
+  self-construction as a fallback for callers that don't pass them.
+  `lock`/`task` are
   each their own command family (`register_family`, the same pattern
   `mode` already established) — an invalid `lock ...`/`task ...`
   input gets a deterministic family reply, never falling through to
@@ -151,6 +153,14 @@ fallback.
   wired into `bot/discord_bot.py`'s own startup (which never creates
   domain data today) and not a migration (schema only, per this
   project's own convention).
+- **First Testable Keyholder Milestone, Slice D.** `ApplicationService.__init__`
+  gained new, optional `lock_state`/`task_runtime`/`task_catalog`
+  parameters — see `conversation_engine/README.md`'s own "Slice D"
+  section for the full detail (this is the DI half of that same
+  change; the composition root half lives in `bot/discord_bot.py`).
+  `tests/application/test_conversation_context_integration.py`
+  verifies the whole path end-to-end through `ApplicationService`
+  itself, not just the Conversation Engine internals.
 - **Advanced Mode's transition process, wired end-to-end from Discord
   DM to `advanced_mode`'s own persisted state and back.** No new
   natural-language parsing — each `mode ...` command is registered as

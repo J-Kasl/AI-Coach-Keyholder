@@ -70,6 +70,8 @@ class ApplicationService:
     def __init__(
         self, db_path: str | Path, *, core: CoreDatabase | None = None,
         conversation_engine: ConversationEngine | None = None,
+        lock_state: LockState | None = None, task_runtime: TaskRuntime | None = None,
+        task_catalog: TaskCatalog | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -83,10 +85,19 @@ class ApplicationService:
         self.goal_management = GoalManager(self.db_path, core=self._core)
         self.advanced_mode = AdvancedMode(self.db_path, core=self._core)
         self.advanced_mode_admin = AdvancedModeAdministration(self.db_path, core=self._core)
-        self.lock_state = LockState(self.db_path, core=self._core)
+        # lock_state/task_runtime/task_catalog: Slice D's own production
+        # composition root (bot/discord_bot.py) constructs these ONCE and
+        # passes the SAME read instances here AND into the new
+        # ConversationEngine context providers -- no duplicate state
+        # owners. The self-construction fallback below exists only for
+        # backward compatibility with existing tests that construct
+        # ApplicationService(db_path, core=core) without these params;
+        # it must never diverge in behavior from the DI path, since both
+        # ultimately wrap the same `core`.
+        self.lock_state = lock_state if lock_state is not None else LockState(self.db_path, core=self._core)
         self.lock_state_admin = LockStateAdministration(self.db_path, core=self._core)
-        self.task_catalog = TaskCatalog(self.db_path, core=self._core)
-        self.task_runtime = TaskRuntime(self.db_path, core=self._core)
+        self.task_catalog = task_catalog if task_catalog is not None else TaskCatalog(self.db_path, core=self._core)
+        self.task_runtime = task_runtime if task_runtime is not None else TaskRuntime(self.db_path, core=self._core)
         self.task_runtime_admin = TaskRuntimeAdministration(self.db_path, core=self._core)
 
         self.router = CommandRouter()

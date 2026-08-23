@@ -35,28 +35,28 @@ class _OkProvider:
     def __init__(self, namespace: str) -> None:
         self.namespace = namespace
 
-    def provide_context(self, *, now: datetime):
+    def provide_context(self, *, subject_key: str, now: datetime):
         return ConversationContextFragment(namespace=self.namespace, data={"ok": True})
 
 
 class _NoneProvider:
     namespace = "empty"
 
-    def provide_context(self, *, now: datetime):
+    def provide_context(self, *, subject_key: str, now: datetime):
         return None
 
 
 class _RaisingProvider:
     namespace = "broken"
 
-    def provide_context(self, *, now: datetime):
+    def provide_context(self, *, subject_key: str, now: datetime):
         raise RuntimeError("simulated provider failure")
 
 
 class _MismatchedNamespaceProvider:
     namespace = "declared"
 
-    def provide_context(self, *, now: datetime):
+    def provide_context(self, *, subject_key: str, now: datetime):
         return ConversationContextFragment(namespace="different", data={})
 
 
@@ -66,7 +66,7 @@ class TestAssembleContextHappyPath:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
             language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-            providers=providers, required_provider_namespaces=frozenset(), now=FIXED_TIME,
+            providers=providers, required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert set(snapshot.context_fragments) == {"a", "b"}
         assert all(o.succeeded for o in outcomes)
@@ -75,7 +75,7 @@ class TestAssembleContextHappyPath:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.ERROR_FALLBACK, current_user_message="hi",
             language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-            providers=[], required_provider_namespaces=frozenset(), now=FIXED_TIME,
+            providers=[], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert dict(snapshot.context_fragments) == {}
         assert outcomes == ()
@@ -86,7 +86,7 @@ class TestOptionalProviderFailure:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
             language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-            providers=[_NoneProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), now=FIXED_TIME,
+            providers=[_NoneProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert "empty" not in snapshot.context_fragments
         assert "a" in snapshot.context_fragments
@@ -97,7 +97,7 @@ class TestOptionalProviderFailure:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
             language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-            providers=[_RaisingProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), now=FIXED_TIME,
+            providers=[_RaisingProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert "broken" not in snapshot.context_fragments
         broken_outcome = next(o for o in outcomes if o.namespace == "broken")
@@ -111,7 +111,7 @@ class TestRequiredProviderFailure:
             assemble_context(
                 response_category=ResponseCategory.GOVERNANCE_EXPLANATION, current_user_message="hi",
                 language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-                providers=[_RaisingProvider()], required_provider_namespaces=frozenset({"broken"}), now=FIXED_TIME,
+                providers=[_RaisingProvider()], required_provider_namespaces=frozenset({"broken"}), subject_key="user-1", now=FIXED_TIME,
             )
 
     def test_never_proceeds_with_a_fabricated_fact_for_a_missing_required_namespace(self) -> None:
@@ -121,7 +121,7 @@ class TestRequiredProviderFailure:
             assemble_context(
                 response_category=ResponseCategory.GOVERNANCE_EXPLANATION, current_user_message="hi",
                 language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-                providers=[], required_provider_namespaces=frozenset({"decision"}), now=FIXED_TIME,
+                providers=[], required_provider_namespaces=frozenset({"decision"}), subject_key="user-1", now=FIXED_TIME,
             )
 
 
@@ -131,7 +131,7 @@ class TestNamespaceContract:
             assemble_context(
                 response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
                 language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
-                providers=[_MismatchedNamespaceProvider()], required_provider_namespaces=frozenset(), now=FIXED_TIME,
+                providers=[_MismatchedNamespaceProvider()], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
             )
 
     def test_two_providers_claiming_the_same_namespace_fails_deterministically(self) -> None:
@@ -140,7 +140,7 @@ class TestNamespaceContract:
                 response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
                 language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
                 providers=[_OkProvider("dup"), _OkProvider("dup")], required_provider_namespaces=frozenset(),
-                now=FIXED_TIME,
+                subject_key="user-1", now=FIXED_TIME,
             )
 
 
@@ -153,7 +153,7 @@ class TestBuildResponseContextOrchestration:
         outcome = build_response_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
             language="en", identity_id="alex", situational_constraints=SituationalConstraints(),
-            providers=[_OkProvider("a")], required_provider_namespaces=frozenset(), now=FIXED_TIME,
+            providers=[_OkProvider("a")], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert outcome.snapshot is not None
         assert outcome.fallback_response is None
@@ -162,7 +162,7 @@ class TestBuildResponseContextOrchestration:
         outcome = build_response_context(
             response_category=ResponseCategory.GOVERNANCE_EXPLANATION, current_user_message="hi",
             language="en", identity_id="alex", situational_constraints=SituationalConstraints(),
-            providers=[_RaisingProvider()], required_provider_namespaces=frozenset({"broken"}), now=FIXED_TIME,
+            providers=[_RaisingProvider()], required_provider_namespaces=frozenset({"broken"}), subject_key="user-1", now=FIXED_TIME,
         )
         assert outcome.snapshot is None
         assert outcome.fallback_response is not None

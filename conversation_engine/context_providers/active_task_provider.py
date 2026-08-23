@@ -1,0 +1,73 @@
+"""
+conversation_engine/context_providers/active_task_provider.py
+
+ActiveTaskContextProvider -- a ConversationContextProvider reading
+only through task_runtime's own TaskRuntime and task_catalog's own
+TaskCatalog, never TaskRuntimeAdministration/TaskCatalogAdministration.
+Always returns a real fragment on a successful read, including
+`has_active_task=False` -- None/an exception is reserved exclusively
+for a genuine read failure.
+
+Uses the assignment's own exact (template_id, template_version) --
+never the template's current/latest version -- so the prompt always
+reflects the immutable version the assignment was actually created
+against, even if Task Catalog's own current_version has since advanced.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from conversation_engine.models import ConversationContextFragment
+from task_catalog.repository import TaskCatalog
+from task_runtime.repository import TaskRuntime
+
+__all__ = ["ActiveTaskContextProvider"]
+
+# Minimal disclosure whitelist -- template_id/template_version are
+# included deliberately: template_id is today the only usable
+# conversational task identifier (no user-facing title/description
+# field exists on TaskTemplateVersion yet -- a known, documented dev
+# limitation, not something this provider invents a fix for), and
+# template_version is not sensitive and preserves the immutable-version
+# invariant explicitly in the prompt itself. Never included: assignment
+# id, user_id, any consent/provenance id, or raw audit timestamps not
+# needed for the conversation.
+
+
+class ActiveTaskContextProvider:
+    """Stateless, static -- see LockStateContextProvider's own
+    docstring for why this is safe to share across subjects."""
+
+    namespace = "active_task"
+
+    def __init__(self, *, task_runtime: TaskRuntime, task_catalog: TaskCatalog) -> None:
+        self._task_runtime = task_runtime
+        self._task_catalog = task_catalog
+
+    def provide_context(self, *, subject_key: str, now: datetime) -> ConversationContextFragment | None:
+        assignment = self._task_runtime.get_active_assignment(subject_key)
+        if assignment is None:
+            return ConversationContextFragment(namespace=self.namespace, data={"has_active_task": False})
+
+        template = self._task_catalog.get_template(assignment.template_id, assignment.template_version)
+        if template is None:
+            # The assignment's own composite FK guarantees this row
+            # exists (task_runtime/README.md) -- reaching here would be
+            # a genuine, unexpected inconsistency, not a normal
+            # "no active task" state. Treat it as a read failure, not
+            # a fabricated negative fact.
+            return None
+
+        return ConversationContextFragment(
+            namespace=self.namespace,
+            data={
+                "has_active_task": True,
+                "template_id": template.template_id,
+                "template_version": template.version,
+                "category": template.category,
+                "difficulty": template.difficulty,
+                "duration_minutes": template.duration_minutes,
+                "completion_requirements": template.completion_requirements,
+            },
+        )

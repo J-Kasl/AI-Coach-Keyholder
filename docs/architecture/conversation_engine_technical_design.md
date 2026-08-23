@@ -663,6 +663,20 @@ implemented read API — not before.
 **Out of scope:** any change to Memory System's own retrieval/ranking
 logic — this slice only ever consumes it.
 
+> **Note (First Testable Keyholder Milestone, Slice D — implemented,
+> outside this document's own Slice 1-6 numbering).** Two concrete
+> `ConversationContextProvider` implementations now exist —
+> `LockStateContextProvider`/`ActiveTaskContextProvider`
+> (`conversation_engine/context_providers/`) — see
+> `conversation_engine/README.md`'s own "Slice D" section for the
+> exact boundary. This slice also changed the `ConversationContextProvider`
+> Protocol itself (an explicit `subject_key` parameter, since providers
+> are static, stateless, and shared across every subject the engine
+> serves). This document's own global status remains unchanged
+> (`Draft for review, not approved for implementation`) — only this
+> specific slice has been built; Slices 4 through 6 below remain
+> entirely unimplemented and unapproved.
+
 ### Slice 4 — Structured domain facts and governance explanations
 
 **Prerequisites:** a real Decision Engine (or another structured fact

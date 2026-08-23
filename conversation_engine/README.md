@@ -5,6 +5,72 @@ Canonical design: `docs/architecture/conversation_engine_technical_design.md`
 whole document** — this README describes exactly which specific slice
 of that draft has been implemented here, and nothing more).
 
+## What is implemented here — Slice D (Authoritative Conversation Context Integration)
+
+Ordinary unmatched conversation now knows two authoritative facts,
+read fresh from the database for every turn — never invented, never
+carried over from Working Memory alone.
+
+- **`providers.py`** — `ConversationContextProvider.provide_context()`
+  gained an explicit `subject_key: str` parameter. Providers are
+  stateless, static instances shared across every subject the engine
+  ever serves (including concurrently) — `subject_key` is a plain
+  per-call argument, never `self._user_id` or any other mutable/
+  thread-local current-subject state. Verified directly under genuine
+  thread concurrency (`tests/conversation_engine/context_providers/`),
+  not just sequential calls.
+- **`context_providers/lock_state_provider.py`** —
+  `LockStateContextProvider`. Reads only `lock_state.LockState`
+  (never `LockStateAdministration`). Always returns a real fragment on
+  a successful read, including `UNKNOWN` — a provider `None`/exception
+  is reserved exclusively for a genuine read failure, never used to
+  represent a successfully-determined "nothing to report" state.
+  Epistemic wording is explicit at every status: `LOCKED_USER_REPORTED`
+  says "has not been independently physically verified", `UNKNOWN`
+  says "do not infer that the user is unlocked".
+- **`context_providers/active_task_provider.py`** —
+  `ActiveTaskContextProvider`. Reads only `task_runtime.TaskRuntime`
+  and `task_catalog.TaskCatalog` (never their own `*Administration`
+  counterparts). Uses the assignment's own exact
+  `(template_id, template_version)` -- never the template's current/
+  latest version -- so the prompt always reflects the immutable version
+  the assignment was actually created against, verified directly even
+  after a later `add_version()`/`set_current_version()`. Minimal
+  disclosure: `template_id`/`template_version`/`category`/`difficulty`/
+  `duration_minutes`/`completion_requirements` only -- never
+  `assignment.id`, `user_id`, or any consent/provenance id.
+- **`prompt_builder.py`** -- a new deterministic
+  `AUTHORITATIVE APPLICATION STATE` section, placed **before** Working
+  Memory in the system message. Template metadata (including
+  `completion_requirements`, which could in principle contain
+  adversarial-looking text) is serialized as plain, labeled DATA
+  inside this one block -- verified structurally that it can never
+  become a new `ModelMessage`, never changes any message's role, and
+  the current user message always remains the final `role="user"`
+  turn. Wording avoids "verified against the database" -- a DB read is
+  an authoritative *application record*, never a claim about physical
+  reality.
+- **Object graph** -- `bot/discord_bot.py`'s own composition root now
+  constructs `LockState`/`TaskRuntime`/`TaskCatalog` **once**, sharing
+  one `core: CoreDatabase`; the same read-only instances go to both
+  the new context providers (-> `ConversationEngine`) and
+  `ApplicationService` (as new, explicit, optional DI parameters --
+  falling back to today's self-construction only for tests that don't
+  pass them, never diverging in behavior since both wrap the same
+  `core`). No duplicate state owners.
+- **Verified, not just claimed**: Working Memory contradicting the
+  authoritative state (e.g. an earlier turn implying "unlocked," while
+  `LockState` now says `LOCKED_USER_REPORTED`) never suppresses the
+  authoritative fact -- the two live in structurally separate places
+  in the prompt (a dedicated system-message section vs.
+  `role="user"/"assistant"` turns), not merged into one ambiguous
+  paragraph. Full manual acceptance flow (report lock -> ask about
+  state -> request task -> ask about task -> free-text "I finished it"
+  leaves the assignment `ACTIVE` -> `task complete` deterministically
+  resolves it -> a fresh `ApplicationService`/`ConversationEngine`
+  after a "restart" still sees the same persisted facts) run
+  end-to-end and confirmed.
+
 ## What is implemented here — Slice 3 (Working Memory integration)
 
 Replaced `TransitionalRecentMessageBuffer` with `memory_system`'s own

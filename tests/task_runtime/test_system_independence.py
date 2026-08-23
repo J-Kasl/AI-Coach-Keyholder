@@ -66,10 +66,10 @@ class TestNoCyclicDependency:
 
 class TestApplicationServiceIsTheOnlyApprovedImporter:
     """application/service.py (First Testable Keyholder Milestone,
-    Slice C) is the ONE approved integration point for task_runtime --
-    constructed the same way advanced_mode is, directly inside
-    ApplicationService.__init__, not via DI from bot/discord_bot.py's
-    own composition root. No other file anywhere may import task_runtime."""
+    Slice C), bot/discord_bot.py's own composition root, and
+    conversation_engine/context_providers/active_task_provider.py
+    (Slice D) are the ONLY approved integration points for task_runtime.
+    No other file anywhere may import it."""
 
     def test_no_other_file_references_task_runtime(self) -> None:
         checked_packages = [
@@ -78,6 +78,8 @@ class TestApplicationServiceIsTheOnlyApprovedImporter:
             "advanced_mode", "infrastructure", "ai", "lock_state",
         ]
         allowed_application_files = {"service.py"}
+        allowed_bot_files = {"discord_bot.py"}
+        allowed_conversation_engine_files = {"active_task_provider.py"}
         offending: list[str] = []
         for package in checked_packages:
             package_dir = PROJECT_ROOT / package
@@ -85,6 +87,10 @@ class TestApplicationServiceIsTheOnlyApprovedImporter:
                 continue
             for py_file in package_dir.rglob("*.py"):
                 if package == "application" and py_file.name in allowed_application_files:
+                    continue
+                if package == "bot" and py_file.name in allowed_bot_files:
+                    continue
+                if package == "conversation_engine" and py_file.name in allowed_conversation_engine_files:
                     continue
                 names = _imported_module_names(py_file)
                 if any(n == "task_runtime" or n.startswith("task_runtime.") for n in names):

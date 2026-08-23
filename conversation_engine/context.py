@@ -67,7 +67,7 @@ def assemble_context(
     *, response_category: ResponseCategory, current_user_message: str, language: str,
     identity_profile: CommunicationProfile, situational_constraints: SituationalConstraints,
     providers: Sequence[ConversationContextProvider], required_provider_namespaces: frozenset[str],
-    now: datetime,
+    subject_key: str, now: datetime,
 ) -> tuple[ResponseContextSnapshot, tuple[ProviderCallOutcome, ...]]:
     """
     CE-1/CE-5/CE-6/CE-8/CE-9/CE-10. Calls every provider in the given
@@ -77,6 +77,11 @@ def assemble_context(
     infrastructure/plugin_fault_boundary.py already established, sized
     down here -- no circuit breaker needed for a small static list in
     one process).
+
+    `subject_key` (Slice D) is passed to every provider call -- a
+    plain function argument, never stored on the provider instance
+    itself, so the same static provider list is safe to reuse across
+    every subject the engine ever serves, including concurrently.
 
     A provider returning `None`, or raising, is an OPTIONAL failure by
     default -- recorded in the returned outcomes, the namespace simply
@@ -96,7 +101,7 @@ def assemble_context(
 
     for provider in providers:
         try:
-            fragment = provider.provide_context(now=now)
+            fragment = provider.provide_context(subject_key=subject_key, now=now)
         except Exception as exc:  # noqa: BLE001 -- deliberately broad: this boundary's entire purpose
             outcomes.append(ProviderCallOutcome(namespace=provider.namespace, succeeded=False, error=str(exc)))
             continue
@@ -156,7 +161,7 @@ def build_response_context(
     *, response_category: ResponseCategory, current_user_message: str, language: str,
     identity_id: str, situational_constraints: SituationalConstraints,
     providers: Sequence[ConversationContextProvider], required_provider_namespaces: frozenset[str],
-    now: datetime,
+    subject_key: str, now: datetime,
 ) -> ContextAssemblyOutcome:
     """
     THE orchestration point (per explicit review instruction: the
@@ -179,7 +184,7 @@ def build_response_context(
             response_category=response_category, current_user_message=current_user_message,
             language=language, identity_profile=identity_profile,
             situational_constraints=situational_constraints, providers=providers,
-            required_provider_namespaces=required_provider_namespaces, now=now,
+            required_provider_namespaces=required_provider_namespaces, subject_key=subject_key, now=now,
         )
         return ContextAssemblyOutcome(snapshot=snapshot, provider_outcomes=outcomes)
     except RequiredProviderFailedError:

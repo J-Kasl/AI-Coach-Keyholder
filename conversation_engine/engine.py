@@ -85,7 +85,7 @@ class ConversationEngine:
                 response_category=ResponseCategory.COACHING_DIALOGUE,
                 current_user_message=current_user_message, language=language, identity_id=identity_id,
                 situational_constraints=SituationalConstraints(), providers=self._providers,
-                required_provider_namespaces=frozenset(), now=now,
+                required_provider_namespaces=frozenset(), subject_key=subject_key, now=now,
             )
             if outcome.fallback_response is not None:
                 return outcome.fallback_response  # Working Memory is NOT touched

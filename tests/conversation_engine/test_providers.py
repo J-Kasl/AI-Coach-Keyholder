@@ -13,7 +13,7 @@ FIXED_TIME = datetime(2026, 1, 1, tzinfo=timezone.utc)
 class _FakeProvider:
     namespace = "fake"
 
-    def provide_context(self, *, now: datetime) -> ConversationContextFragment | None:
+    def provide_context(self, *, subject_key: str, now: datetime) -> ConversationContextFragment | None:
         return ConversationContextFragment(namespace="fake", data={"now": now.isoformat()})
 
 
@@ -32,8 +32,8 @@ class TestConversationContextProviderProtocol:
         class _EmptyProvider:
             namespace = "empty"
 
-            def provide_context(self, *, now: datetime):
+            def provide_context(self, *, subject_key: str, now: datetime):
                 return None
 
-        result = _EmptyProvider().provide_context(now=FIXED_TIME)
+        result = _EmptyProvider().provide_context(subject_key="user-1", now=FIXED_TIME)
         assert result is None
