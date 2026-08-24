@@ -24,6 +24,19 @@ Concretely, this means:
   the original tables too, until it's clear the migration went
   smoothly).
 
+A column added without a `DEFAULT` (nullable) is also allowed, and is
+the *correct* choice specifically when no literal default value could
+be truthful for pre-existing rows — a fabricated default (e.g. an
+empty string standing in for real content) is worse than `NULL`,
+because it is indistinguishable from genuine data at read time. See
+`database/migrations/021_task_catalog_content.sql` for a concrete
+case: `title`/`instructions` are added nullable, with `NULL` reserved
+to mean exactly "this row predates this migration," and no backfill
+`UPDATE` is issued because no historically accurate value exists to
+backfill with (contrast migrations 015/016, task_catalog's own
+consent/timestamp audit columns, where a real backfill was possible
+and was performed).
+
 **Forbidden without an explicit exception and an extra backup:**
 - `DROP TABLE`
 - `DROP COLUMN`

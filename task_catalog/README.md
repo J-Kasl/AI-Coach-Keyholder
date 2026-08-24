@@ -38,9 +38,44 @@ change that document's own status).
   object, but nothing in the schema itself would stop a `DELETE`/`UPDATE`
   issued outside `TaskCatalogAdministration`.
 
+  **`title`/`instructions` (Candidate B, migration 021)** — the
+  human-readable content this module previously lacked entirely (a
+  known, documented gap — see `conversation_engine/README.md`'s own
+  Slice D notes prior to this change). `str | None` on the dataclass
+  itself: `None` means exactly "this row predates migration 021,"
+  never anything else, and exists purely so a legacy row remains
+  constructible/readable. This is **not** a general invitation for
+  new code to write `None` — the stronger invariant, "every newly
+  created version has real, non-empty content," is enforced one layer
+  up, at the write API boundary (`TaskCatalogAdministration.create_template()`/
+  `add_version()` require `str`, not `str | None`, and reject
+  empty/whitespace-only/oversized values — see below). Both fields:
+  - **`title`** — a short label, max 200 characters.
+  - **`instructions`** — the actual human-readable steps, max 2000
+    characters.
+  - Both are stripped of leading/trailing whitespace at the write API
+    boundary before persistence (never mutated after construction —
+    `TaskTemplateVersion` stays `frozen=True`).
+  - Both are plain, arbitrary author-supplied text — never markup,
+    never evaluated as instructions to any code, including the model
+    (see `conversation_engine/README.md`'s own Slice D trust-boundary
+    notes for how this is enforced downstream).
+  - Kept conceptually separate from `completion_requirements`, which
+    remains an untyped `dict` for machine-oriented/verification-adjacent
+    structure — `instructions` answers "what does the user do,"
+    `completion_requirements` answers "how is it judged done" (today
+    unused for that purpose by the seed data).
+  - A wording change is a new version (`add_version()`), exactly like
+    any other field — never an edit to an existing row. An assignment
+    already pinned to an older version keeps reading that older
+    version's own wording (`task_runtime`'s own composite foreign key,
+    unaffected by this change).
+
   **Minimal validation** (`TaskTemplateVersion.__post_init__`):
   `eligible_instance_roles`/`eligible_operating_modes` must each be
-  non-empty and contain no duplicates — raises a plain `ValueError`
+  non-empty and contain no duplicates; `title`/`instructions`, if not
+  `None`, must be non-blank and within their respective length limits
+  — raises a plain `ValueError`
   (a `ValueError` subclass, `InvalidTaskTemplateVersionError`, is what
   `TaskCatalogAdministration`'s own methods raise for other write
   failures — catching `ValueError` broadly catches both). Deliberately
@@ -129,7 +164,20 @@ change that document's own status).
   available historical approximation, not a historically accurate
   record of when the `current_version` pointer itself last changed**
   — the prior schema kept no separate timestamp for that at all.
-- **58 tests** (`tests/task_catalog/`) covering both files, including
+- **`database/migrations/021_task_catalog_content.sql`** — adds
+  `title`/`instructions` to `task_template_versions` (Candidate B).
+  Nullable, no fabricated `DEFAULT`, no backfill `UPDATE` — unlike
+  migration 016, there is no defensible historical approximation for
+  content that never existed on this table before, so pre-existing
+  rows are simply read back as `NULL`/`None` and handled explicitly,
+  never invented, at the application layer (`_row_to_version()` passes
+  `NULL` straight through; `conversation_engine/prompt_builder.py`
+  renders an explicit `"(not recorded)"` marker for that case). Newly
+  created rows (`create_template()`/`add_version()`, from this
+  migration forward) always populate both columns with real content —
+  enforced at the write API boundary, not by this migration's schema.
+
+- **83 tests** (`tests/task_catalog/`) covering both files, including
   direct verification of TC-1 (append-only, verified by re-fetching a
   version after a later `add_version()` call and asserting byte-for-byte
   equality — not merely asserted in a docstring), TC-2 (deactivation

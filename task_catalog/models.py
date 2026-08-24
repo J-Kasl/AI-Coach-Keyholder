@@ -65,6 +65,10 @@ class LockRequirement(StrEnum):
     REQUIRES_LOCKED = "requires_locked"
 
 
+TITLE_MAX_LENGTH = 200
+INSTRUCTIONS_MAX_LENGTH = 2000
+
+
 @dataclass(frozen=True, kw_only=True)
 class TaskTemplateVersion:
     """
@@ -74,6 +78,25 @@ class TaskTemplateVersion:
     edit to an existing row. `frozen=True` enforces this at the Python
     level too, not only in the database schema (no application code
     ever mutates an instance's fields after construction).
+
+    `title`/`instructions` (Candidate B, migration 021): `str | None`
+    at the domain-model level ONLY so pre-migration-021 rows remain
+    constructible/readable -- `None` means exactly "this row predates
+    human-readable task content," nothing else. This is NOT a general
+    invitation for new code to pass `title=None`/`instructions=None`.
+    The stronger "every newly created version has real, non-empty
+    content" invariant is enforced one layer up, at the WRITE API
+    boundary (`TaskCatalogAdministration.create_template()`/
+    `add_version()`, task_catalog/repository.py) -- those methods
+    require `str` (not `str | None`) for both parameters and reject
+    empty/whitespace-only/oversized values before a `TaskTemplateVersion`
+    is even constructed. `__post_init__` below only guards against a
+    non-`None` value that is blank or too long; it deliberately does
+    NOT require non-`None`, since that requirement belongs to the
+    write API, not to every possible construction of this type
+    (`_row_to_version()` must remain able to construct a legacy row
+    with `title=None`/`instructions=None` read straight from the
+    database, with no special-casing).
     """
     id: str = field(default_factory=new_id)
     template_id: str
@@ -94,6 +117,8 @@ class TaskTemplateVersion:
     lock_requirement: LockRequirement
     created_at: datetime
     created_via_consent_id: str   # governance (TC-4): never created without one
+    title: str | None = None
+    instructions: str | None = None
 
     def __post_init__(self) -> None:
         """
@@ -126,6 +151,27 @@ class TaskTemplateVersion:
             raise ValueError("eligible_operating_modes must not be empty.")
         if len(set(self.eligible_operating_modes)) != len(self.eligible_operating_modes):
             raise ValueError("eligible_operating_modes must not contain duplicates.")
+
+        # title/instructions (Candidate B): `None` is permitted here --
+        # it is the legacy/pre-migration-021 "not recorded" state, and
+        # this dataclass must remain constructible for rows read back
+        # that way (task_catalog/repository.py::_row_to_version). A
+        # non-`None` value, however, must be real: not blank, not
+        # whitespace-only, not over the approved length. The stronger
+        # rule -- that a NEWLY CREATED version must never be `None` at
+        # all -- is enforced one layer up, at the write API boundary
+        # (TaskCatalogAdministration.create_template()/add_version()),
+        # not here.
+        if self.title is not None:
+            if not self.title.strip():
+                raise ValueError("title must not be empty or whitespace-only.")
+            if len(self.title) > TITLE_MAX_LENGTH:
+                raise ValueError(f"title must be at most {TITLE_MAX_LENGTH} characters.")
+        if self.instructions is not None:
+            if not self.instructions.strip():
+                raise ValueError("instructions must not be empty or whitespace-only.")
+            if len(self.instructions) > INSTRUCTIONS_MAX_LENGTH:
+                raise ValueError(f"instructions must be at most {INSTRUCTIONS_MAX_LENGTH} characters.")
 
 
 @dataclass(kw_only=True)

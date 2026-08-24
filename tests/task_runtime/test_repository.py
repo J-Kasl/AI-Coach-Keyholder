@@ -75,7 +75,8 @@ def user_id(core: CoreDatabase) -> str:
 
 def _create_template(catalog_admin: TaskCatalogAdministration, *, template_id: str, lock_requirement: LockRequirement) -> None:
     catalog_admin.create_template(
-        template_id=template_id, category="chore", difficulty="easy", effort="low", duration_minutes=10,
+        template_id=template_id, title="Test task", instructions="Do the test task.",
+        category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
         eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard",),
         completion_requirements={}, verification_requirements={}, reflection_requirements=None,
@@ -171,7 +172,8 @@ class TestReferentialIntegrity:
         assert assignment.template_version == 1
 
         catalog_admin.add_version(
-            "t1", category="chore", difficulty="hard", effort="high", duration_minutes=20,
+            "t1", title="Test task", instructions="Do the test task.",
+            category="chore", difficulty="hard", effort="high", duration_minutes=20,
             required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
             eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard",),
             completion_requirements={}, verification_requirements={}, reflection_requirements=None,

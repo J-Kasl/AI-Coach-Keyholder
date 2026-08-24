@@ -24,15 +24,25 @@ from task_runtime.repository import TaskRuntime
 
 __all__ = ["ActiveTaskContextProvider"]
 
-# Minimal disclosure whitelist -- template_id/template_version are
-# included deliberately: template_id is today the only usable
-# conversational task identifier (no user-facing title/description
-# field exists on TaskTemplateVersion yet -- a known, documented dev
-# limitation, not something this provider invents a fix for), and
-# template_version is not sensitive and preserves the immutable-version
-# invariant explicitly in the prompt itself. Never included: assignment
+# Minimal disclosure whitelist -- title/instructions (Candidate B,
+# migration 021) are now the primary human-readable content; the
+# previously-documented "no user-facing title/description field
+# exists yet" limitation is closed by this fragment. template_id is
+# still included alongside title -- it remains the only STABLE
+# conversational/support reference (title wording can change across
+# versions; template_id does not), and it was never in this module's
+# own "never expose" list to begin with (only assignment-/user-scoped
+# identifiers are). template_version is retained for the same
+# historical-accuracy reason as before. Never included: assignment
 # id, user_id, any consent/provenance id, or raw audit timestamps not
 # needed for the conversation.
+#
+# title/instructions are exposed as `str | None` -- `None` only for a
+# legacy row that predates migration 021 (task_catalog/models.py's own
+# TaskTemplateVersion docstring). This provider does not fabricate
+# replacement text for a `None` value; rendering an explicit "not
+# recorded" marker for that case is conversation_engine/prompt_builder.py's
+# job, not this provider's.
 
 
 class ActiveTaskContextProvider:
@@ -65,6 +75,8 @@ class ActiveTaskContextProvider:
                 "has_active_task": True,
                 "template_id": template.template_id,
                 "template_version": template.version,
+                "title": template.title,
+                "instructions": template.instructions,
                 "category": template.category,
                 "difficulty": template.difficulty,
                 "duration_minutes": template.duration_minutes,

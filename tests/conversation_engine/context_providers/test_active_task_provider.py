@@ -66,9 +66,13 @@ def user_id(core: CoreDatabase) -> str:
     return _create_user(core)
 
 
-def _create_template(catalog_admin: TaskCatalogAdministration, *, template_id: str = "t1") -> None:
+def _create_template(
+    catalog_admin: TaskCatalogAdministration, *, template_id: str = "t1",
+    title: str = "Tidy one surface", instructions: str = "Pick a surface and clear it off.",
+) -> None:
     catalog_admin.create_template(
-        template_id=template_id, category="chore", difficulty="easy", effort="low", duration_minutes=10,
+        template_id=template_id, title=title, instructions=instructions,
+        category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
         eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard",),
         completion_requirements={"steps": ["do it"]}, verification_requirements={}, reflection_requirements=None,
@@ -99,6 +103,8 @@ class TestActiveAssignment:
         assert fragment.data["has_active_task"] is True
         assert fragment.data["template_id"] == "t1"
         assert fragment.data["template_version"] == 1
+        assert fragment.data["title"] == "Tidy one surface"
+        assert fragment.data["instructions"] == "Pick a surface and clear it off."
         assert fragment.data["category"] == "chore"
         assert fragment.data["difficulty"] == "easy"
         assert fragment.data["duration_minutes"] == 10
@@ -112,7 +118,8 @@ class TestActiveAssignment:
         assert assignment.template_version == 1
 
         catalog_admin.add_version(
-            "t1", category="chore-v2", difficulty="hard", effort="high", duration_minutes=99,
+            "t1", title="Tidy one surface (v2 wording)", instructions="Completely different v2 instructions.",
+            category="chore-v2", difficulty="hard", effort="high", duration_minutes=99,
             required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
             eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard",),
             completion_requirements={}, verification_requirements={}, reflection_requirements=None,
@@ -123,6 +130,13 @@ class TestActiveAssignment:
         fragment = provider.provide_context(subject_key=user_id, now=FIXED_TIME)
         assert fragment.data["template_version"] == 1
         assert fragment.data["category"] == "chore"  # NOT "chore-v2" -- the version pinned at assignment time
+        # Candidate B / instruction #10's own mandatory historical-version
+        # acceptance test: title/instructions must extend this SAME
+        # already-existing invariant, not a parallel mechanism.
+        assert fragment.data["title"] == "Tidy one surface"
+        assert fragment.data["instructions"] == "Pick a surface and clear it off."
+        assert fragment.data["title"] != "Tidy one surface (v2 wording)"
+        assert fragment.data["instructions"] != "Completely different v2 instructions."
 
     def test_resolved_assignment_is_no_longer_active_context(self, catalog_admin, runtime_admin, provider: ActiveTaskContextProvider, user_id: str) -> None:
         _create_template(catalog_admin)
@@ -203,3 +217,43 @@ class TestNoAdministrationDependency:
     def test_provider_has_no_administration_attributes(self, provider: ActiveTaskContextProvider) -> None:
         assert not hasattr(provider, "_task_runtime_admin")
         assert not hasattr(provider, "_task_catalog_admin")
+
+
+class TestLegacyRowWithNoRecordedContent:
+    """Candidate B, migration 021: a TaskTemplateVersion row that
+    predates human-readable content reads back with title=None/
+    instructions=None -- never fabricated here. This provider's job
+    is only to pass that None through; rendering an explicit "not
+    recorded" marker is conversation_engine/prompt_builder.py's job
+    (see tests/conversation_engine/test_prompt_domain_context.py)."""
+
+    def test_legacy_row_with_null_title_and_instructions_exposes_none(
+        self, catalog_admin, runtime_admin, provider: ActiveTaskContextProvider, core: CoreDatabase, user_id: str,
+    ) -> None:
+        # Simulate a pre-migration-021 row directly via raw SQL --
+        # there is no way to construct one through the governed write
+        # API, which now always requires real title/instructions.
+        catalog_admin.create_template(
+            template_id="legacy-t1", title="placeholder", instructions="placeholder",
+            category="chore", difficulty="easy", effort="low", duration_minutes=10,
+            required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
+            eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard",),
+            completion_requirements={}, verification_requirements={}, reflection_requirements=None,
+            lock_requirement=LockRequirement.NONE, created_via_consent_id="c1", now=FIXED_TIME,
+        )
+        with core.raw_connection() as conn:
+            conn.execute(
+                "UPDATE task_template_versions SET title = NULL, instructions = NULL "
+                "WHERE template_id = ? AND version = 1",
+                ("legacy-t1",),
+            )
+            conn.commit()
+
+        runtime_admin.assign_task(
+            user_id=user_id, template_id="legacy-t1", lock_knowledge_state=LockKnowledgeState.UNKNOWN,
+            assigned_via_consent_id="c2", now=FIXED_TIME,
+        )
+        fragment = provider.provide_context(subject_key=user_id, now=FIXED_TIME)
+        assert fragment.data["has_active_task"] is True
+        assert fragment.data["title"] is None
+        assert fragment.data["instructions"] is None

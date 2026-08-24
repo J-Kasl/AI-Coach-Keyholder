@@ -156,11 +156,31 @@ def _serialize_for_prompt(value: object) -> str:
     return json.dumps(_to_plain_data(value), sort_keys=True, ensure_ascii=False)
 
 
+_NOT_RECORDED = "(not recorded)"
+
+
+def _render_task_text_field(value: object) -> str:
+    """
+    Candidate B: `None` means the active TaskTemplateVersion predates
+    migration 021 (task_catalog/models.py's own TaskTemplateVersion
+    docstring) -- rendered as an explicit, deterministic "(not
+    recorded)" marker, never omitted and never replaced with invented
+    content. This marker is presentation metadata belonging to this
+    module only -- Task Catalog itself never produces or stores this
+    string (task_catalog/repository.py::_row_to_version passes NULL
+    straight through as Python None).
+    """
+    return value if isinstance(value, str) else _NOT_RECORDED
+
+
 def _render_active_task(data: object) -> str:
     if not data["has_active_task"]:
         return "Active task: none."
+    title = _render_task_text_field(data.get("title"))
+    instructions = _render_task_text_field(data.get("instructions"))
     return (
         f"Active task: template_id={data['template_id']}, version={data['template_version']}, "
+        f"title={_serialize_for_prompt(title)}, instructions={_serialize_for_prompt(instructions)}, "
         f"category={data['category']}, difficulty={data['difficulty']}, "
         f"duration_minutes={data['duration_minutes']}, "
         f"completion_requirements={_serialize_for_prompt(data['completion_requirements'])}."

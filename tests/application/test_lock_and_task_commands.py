@@ -63,7 +63,8 @@ def _create_template(service: ApplicationService, *, template_id: str, lock_requ
     from task_catalog.repository import TaskCatalogAdministration
     admin = TaskCatalogAdministration(service.db_path, core=service._core)
     admin.create_template(
-        template_id=template_id, category="chore", difficulty="easy", effort="low", duration_minutes=10,
+        template_id=template_id, title="Test task", instructions="Do the test task.",
+        category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
         eligible_instance_roles=(TaskInstanceRole.PRIMARY,), eligible_operating_modes=("standard", "advanced"),
         completion_requirements={}, verification_requirements={}, reflection_requirements=None,

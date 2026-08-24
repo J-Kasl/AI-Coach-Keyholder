@@ -40,6 +40,8 @@ from infrastructure.database import Transaction, apply_transition
 from infrastructure.time_format import iso as _iso
 from infrastructure.time_format import parse_iso as _parse_iso
 from task_catalog.models import (
+    INSTRUCTIONS_MAX_LENGTH,
+    TITLE_MAX_LENGTH,
     LockRequirement,
     TaskInstanceRole,
     TaskTemplateCatalogEntry,
@@ -94,6 +96,13 @@ def _row_to_version(row) -> TaskTemplateVersion:
         ),
         lock_requirement=LockRequirement(row["lock_requirement"]),
         created_at=_parse_iso(row["created_at"]), created_via_consent_id=row["created_via_consent_id"],
+        # Candidate B (migration 021): NULL at the database level means
+        # exactly "this row predates human-readable task content" --
+        # read back as None, never converted to a fabricated string
+        # here. Any "not recorded" wording is presentation-layer
+        # concern (conversation_engine/prompt_builder.py), not
+        # something Task Catalog itself ever produces.
+        title=row["title"], instructions=row["instructions"],
     )
 
 
@@ -122,8 +131,8 @@ def _insert_version(tx: Transaction, version: TaskTemplateVersion) -> None:
              required_equipment_json, required_privacy, required_context, safety_classification,
              eligible_instance_roles_json, eligible_operating_modes_json,
              completion_requirements_json, verification_requirements_json, reflection_requirements_json,
-             lock_requirement, created_at, created_via_consent_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             lock_requirement, created_at, created_via_consent_id, title, instructions)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             version.id, version.template_id, version.version, version.category, version.difficulty,
@@ -136,6 +145,7 @@ def _insert_version(tx: Transaction, version: TaskTemplateVersion) -> None:
             json.dumps(version.reflection_requirements) if version.reflection_requirements is not None else None,
             version.lock_requirement.value,
             _iso(version.created_at), version.created_via_consent_id,
+            version.title, version.instructions,
         ),
     )
 
@@ -146,6 +156,30 @@ def _require_consent_id(consent_id: str) -> None:
             "A non-empty consent reference is required -- every Task Catalog "
             "write is critical_change-governed (task_catalog_technical_design.md TC-4)."
         )
+
+
+def _normalize_required_text(value: str, *, field_name: str, max_length: int) -> str:
+    """
+    Candidate B write-API boundary: unlike TaskTemplateVersion's own
+    `title`/`instructions` fields (which permit `None`, for legacy
+    rows -- see models.py's own docstring), the WRITE path
+    (create_template()/add_version()) requires real, non-empty
+    content and never accepts/produces `None` for a newly created
+    version.
+
+    Normalizes by stripping leading/trailing whitespace BEFORE the
+    value is validated and BEFORE a TaskTemplateVersion is
+    constructed -- never mutates an already-constructed frozen
+    instance (that isn't possible anyway; this exists purely so the
+    stored/returned value is the stripped one, not the raw one, per
+    Candidate B's own normalization requirement).
+    """
+    stripped = value.strip()
+    if not stripped:
+        raise InvalidTaskTemplateVersionError(f"{field_name} must not be empty or whitespace-only.")
+    if len(stripped) > max_length:
+        raise InvalidTaskTemplateVersionError(f"{field_name} must be at most {max_length} characters.")
+    return stripped
 
 
 class TaskCatalog:
@@ -240,7 +274,8 @@ class TaskCatalogAdministration:
         self._core = core if core is not None else CoreDatabase(self.db_path)
 
     def create_template(
-        self, *, template_id: str, category: str, difficulty: str, effort: str, duration_minutes: int,
+        self, *, template_id: str, title: str, instructions: str, category: str, difficulty: str, effort: str,
+        duration_minutes: int,
         required_equipment: tuple[str, ...], required_privacy: str, required_context: str,
         safety_classification: str, eligible_instance_roles: tuple[TaskInstanceRole, ...],
         eligible_operating_modes: tuple[str, ...], completion_requirements: dict,
@@ -254,6 +289,15 @@ class TaskCatalogAdministration:
         template_id already has an entry (use add_version() for a
         second version).
 
+        `title`/`instructions` (Candidate B) are required `str` here --
+        NOT `str | None` -- every newly created version must carry
+        real, non-empty human-readable content; `None` is reserved
+        exclusively for rows that predate this slice (migration 021),
+        never a value a write path can choose. Both are stripped of
+        leading/trailing whitespace and length-validated BEFORE the
+        TaskTemplateVersion is constructed (`_normalize_required_text()`)
+        -- the stored/returned value is always the normalized one.
+
         Populates all four audit fields on the new CatalogEntry from
         this same creation consent/timestamp -- the initial `ACTIVE`
         eligibility and the initial `current_version=1` are both
@@ -262,6 +306,10 @@ class TaskCatalogAdministration:
         docstring).
         """
         _require_consent_id(created_via_consent_id)
+        normalized_title = _normalize_required_text(title, field_name="title", max_length=TITLE_MAX_LENGTH)
+        normalized_instructions = _normalize_required_text(
+            instructions, field_name="instructions", max_length=INSTRUCTIONS_MAX_LENGTH,
+        )
 
         def write(tx: Transaction, _state: object) -> TaskTemplateVersion:
             existing = tx.fetch_one(
@@ -280,6 +328,7 @@ class TaskCatalogAdministration:
                 verification_requirements=verification_requirements, reflection_requirements=reflection_requirements,
                 lock_requirement=lock_requirement,
                 created_at=now, created_via_consent_id=created_via_consent_id,
+                title=normalized_title, instructions=normalized_instructions,
             )
             _insert_version(tx, version)
             tx.execute(
@@ -300,7 +349,8 @@ class TaskCatalogAdministration:
         return apply_transition(self._core, write=write)
 
     def add_version(
-        self, template_id: str, *, category: str, difficulty: str, effort: str, duration_minutes: int,
+        self, template_id: str, *, title: str, instructions: str, category: str, difficulty: str, effort: str,
+        duration_minutes: int,
         required_equipment: tuple[str, ...], required_privacy: str, required_context: str,
         safety_classification: str, eligible_instance_roles: tuple[TaskInstanceRole, ...],
         eligible_operating_modes: tuple[str, ...], completion_requirements: dict,
@@ -316,10 +366,22 @@ class TaskCatalogAdministration:
         caller-induced collision; UNIQUE(template_id, version) is a
         second, database-level guarantee behind this.
 
+        `title`/`instructions` (Candidate B) required here for exactly
+        the same reason as `create_template()` -- see that method's
+        own docstring. A wording correction is a NEW version with new
+        `title`/`instructions`, never an edit to an existing row; any
+        `TaskAssignment` already pinned to an older version keeps
+        reading that older version's own wording (task_runtime's own
+        composite FK, unaffected by this slice).
+
         Does NOT change current_version -- use set_current_version()
         separately once the new version should become current.
         """
         _require_consent_id(created_via_consent_id)
+        normalized_title = _normalize_required_text(title, field_name="title", max_length=TITLE_MAX_LENGTH)
+        normalized_instructions = _normalize_required_text(
+            instructions, field_name="instructions", max_length=INSTRUCTIONS_MAX_LENGTH,
+        )
 
         def write(tx: Transaction, _state: object) -> TaskTemplateVersion:
             entry_row = tx.fetch_one(
@@ -340,6 +402,7 @@ class TaskCatalogAdministration:
                 verification_requirements=verification_requirements, reflection_requirements=reflection_requirements,
                 lock_requirement=lock_requirement,
                 created_at=now, created_via_consent_id=created_via_consent_id,
+                title=normalized_title, instructions=normalized_instructions,
             )
             _insert_version(tx, version)
             return version

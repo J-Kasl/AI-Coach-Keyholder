@@ -56,6 +56,20 @@ TaskTemplateVersion (append-only, immutable — never edited, never
     reflection_requirements: dict | None
     created_at: datetime
     created_via_consent_id: str                        # critical_change (philosophy.md 2.5)
+    title: str | None                                   # added during implementation --
+    instructions: str | None                            # Candidate B, a confirmed content
+                                                          # gap found under direct review
+                                                          # (no field told a user what a task
+                                                          # actually IS or what to DO); see
+                                                          # task_catalog/README.md for the
+                                                          # full reasoning (this is a fix
+                                                          # within the already-approved
+                                                          # implementation slice, not a
+                                                          # newly-approved part of the
+                                                          # broader draft). `None` only for
+                                                          # rows predating migration 021 --
+                                                          # the write API requires real `str`
+                                                          # content for every new version.
 
 TaskTemplateCatalogEntry (mutable current-state pointer — exactly
                            Goal's own relationship to GoalVersion):

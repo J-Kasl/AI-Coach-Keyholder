@@ -48,8 +48,24 @@ __all__ = ["DEV_SEED_CONSENT_ID", "seed_development_templates"]
 # not a claim that any user consented to anything.
 DEV_SEED_CONSENT_ID = "system:dev_seed"
 
+# title/instructions (Candidate B): plain, self-contained descriptions,
+# deliberately never mentioning deterministic command vocabulary (e.g.
+# "task complete") -- that belongs solely to
+# conversation_engine.prompt_builder.KEYHOLDER_COMMAND_GUIDANCE and
+# application/router.py's own registered commands; duplicating it
+# here would create a second, driftable source of command truth.
+# The locked variant's wording preserves the exact epistemic
+# distinction lock_state/models.py itself insists on: eligibility is
+# based on the user's own report, never framed as independent
+# physical verification.
 _SEED_DEFINITIONS: dict[str, dict] = {
     "dev-seed-basic-chore": dict(
+        title="Tidy one surface",
+        instructions=(
+            "Pick one flat surface in your home, such as a desk, counter, or table. "
+            "Put loose items away and wipe the surface down if needed. Spend about "
+            "ten minutes on it."
+        ),
         category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home",
         safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
@@ -58,6 +74,14 @@ _SEED_DEFINITIONS: dict[str, dict] = {
         lock_requirement=LockRequirement.NONE,
     ),
     "dev-seed-locked-chore": dict(
+        title="Tidy one surface (locked-only)",
+        instructions=(
+            "Pick one flat surface in your home, such as a desk, counter, or table. "
+            "Put loose items away and wipe the surface down if needed. Spend about "
+            "ten minutes on it. This task is only offered while you have reported "
+            "yourself as locked; that eligibility is based on your user-reported "
+            "lock state, not on independent physical verification."
+        ),
         category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home",
         safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),

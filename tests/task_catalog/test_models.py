@@ -83,6 +83,64 @@ class TestTaskTemplateVersionValidation:
         assert version.eligible_instance_roles == (TaskInstanceRole.RECOVERY,)
 
 
+class TestTaskTemplateVersionTitleInstructions:
+    """Candidate B (migration 021). `None` is the legacy/pre-migration
+    "not recorded" state and must remain constructible -- see this
+    module's own TaskTemplateVersion docstring. A non-`None` value,
+    however, must be real: not blank, not whitespace-only, not over
+    the approved length. The stronger "a NEWLY CREATED version must
+    never be None" rule belongs to the write API
+    (TaskCatalogAdministration.create_template()/add_version(), see
+    tests/task_catalog/test_repository.py), not to this dataclass."""
+
+    def test_title_and_instructions_default_to_none(self) -> None:
+        version = _version()
+        assert version.title is None
+        assert version.instructions is None
+
+    def test_none_title_and_instructions_are_permitted(self) -> None:
+        version = _version(title=None, instructions=None)  # must not raise -- legacy-row state
+        assert version.title is None
+        assert version.instructions is None
+
+    def test_a_real_title_and_instructions_construct_normally(self) -> None:
+        version = _version(title="Tidy one surface", instructions="Pick a surface and clear it off.")
+        assert version.title == "Tidy one surface"
+        assert version.instructions == "Pick a surface and clear it off."
+
+    def test_empty_string_title_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="title must not be empty or whitespace-only"):
+            _version(title="", instructions="Do it.")
+
+    def test_whitespace_only_title_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="title must not be empty or whitespace-only"):
+            _version(title="   ", instructions="Do it.")
+
+    def test_title_over_max_length_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="title must be at most 200 characters"):
+            _version(title="x" * 201, instructions="Do it.")
+
+    def test_title_at_max_length_is_accepted(self) -> None:
+        version = _version(title="x" * 200, instructions="Do it.")
+        assert len(version.title) == 200
+
+    def test_empty_string_instructions_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="instructions must not be empty or whitespace-only"):
+            _version(title="A title", instructions="")
+
+    def test_whitespace_only_instructions_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="instructions must not be empty or whitespace-only"):
+            _version(title="A title", instructions="   ")
+
+    def test_instructions_over_max_length_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="instructions must be at most 2000 characters"):
+            _version(title="A title", instructions="x" * 2001)
+
+    def test_instructions_at_max_length_is_accepted(self) -> None:
+        version = _version(title="A title", instructions="x" * 2000)
+        assert len(version.instructions) == 2000
+
+
 class TestTaskTemplateCatalogEntry:
     def test_is_not_frozen(self) -> None:
         """Deliberately mutable (TC-2) -- unlike TaskTemplateVersion,

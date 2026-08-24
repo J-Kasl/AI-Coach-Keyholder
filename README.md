@@ -62,16 +62,22 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**1017 passing tests** across the whole repository (`pytest`), including
+**1081 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
 every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
 form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
-in `trust_manager/README.md` and `penalty_engine/README.md`).
+in `trust_manager/README.md` and `penalty_engine/README.md`). This
+figure was corrected from a prior revision's stale count (1017) once
+found to be out of date during the Task Catalog Human-Readable Task
+Content slice below — noted here rather than silently updated, since
+letting a stale count stand unremarked is exactly the kind of
+documentation drift this project's own "Roadmap" section already
+guards against.
 
-Twenty sequential database migrations are applied so far
-(`database/migrations/001` through `020`), covering the initial Phase 0
+Twenty-one sequential database migrations are applied so far
+(`database/migrations/001` through `021`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -81,11 +87,14 @@ the Task Catalog reference layer, (015/016) its consent/timestamp
 audit columns, (017) Advanced Mode's `OperatingMode` singleton and
 two-stage transition process, (018) its `INVALIDATED` status
 (a `source_mode` mismatch found under direct review), (019) Lock
-State's append-only, user-reported `lock_reports` table, and (020)
+State's append-only, user-reported `lock_reports` table, (020)
 Task Runtime's `task_assignments` table (a database-level composite
 foreign key to `task_template_versions` plus a partial unique index
 enforcing at most one active assignment per user) together with Task
-Catalog's own new `lock_requirement` column. See
+Catalog's own new `lock_requirement` column, and (021) Task Catalog's
+own new `title`/`instructions` columns on `task_template_versions`
+(nullable, no fabricated default -- see
+`task_catalog/README.md`). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -126,6 +135,7 @@ all been confirmed there.
 28. ~~First Testable Keyholder Milestone, Slice B — Task Runtime: `TaskAssignment` lifecycle (`ACTIVE`/`COMPLETED`/`CANCELLED`), authoritative eligibility enforcement re-derived inside `assign_task()` itself (never trusting a caller-supplied decision), database-level composite foreign key pinning an assignment to its exact immutable template version, database-level partial unique index enforcing at-most-one-active-assignment-per-user; `task_catalog`'s own new `LockRequirement`/`lock_requirement` field and `get_current_version()` read method~~ **done** — see `task_runtime/README.md` for the exact boundary (lock-state eligibility dimension only, no selection algorithm, no Discord/Conversation Engine integration yet). Error classification fixed after review — `TaskAssignmentReferentialIntegrityError` is now distinct from `TaskAssignmentConcurrencyError` (an invalid `user_id` FK is no longer mislabeled as an active-assignment race), and error messages no longer include raw identifiers.
 29. ~~First Testable Keyholder Milestone, Slice C — Discord integration for both Slice A and B: `lock status`/`lock report locked`/`lock report unlocked`, `task request`/`task active`/`task complete`/`task cancel`, both as their own `register_family` command families (never falling through to Conversation Engine); `LockState`/`LockStateAdministration`/`TaskCatalog`/`TaskRuntime`/`TaskRuntimeAdministration` constructed directly inside `ApplicationService.__init__` (the same pattern `advanced_mode` uses, no DI from `bot/discord_bot.py`); `task_runtime.selection.select_eligible_template()` (deterministic, lowest `template_id`); `scripts/seed_development_tasks.py` (standalone, idempotent, explicitly-invoked maintenance script for two neutral development task templates)~~ **done** — see `application/README.md` for the exact boundary and its own directly-verified invariants (known commands never reach the model, ordinary conversational text never writes domain state, deterministic replies never enter Working Memory).
 30. ~~First Testable Keyholder Milestone, Slice D — Authoritative Conversation Context Integration: `ConversationContextProvider.provide_context()` gained an explicit `subject_key` parameter (providers are static/stateless, shared across every subject, verified under real thread concurrency); `LockStateContextProvider`/`ActiveTaskContextProvider` (`conversation_engine/context_providers/`), read-only, always returning a real fragment on a successful read (including `UNKNOWN`/no-active-task — never conflating "successfully determined nothing" with "read failed"); a new deterministic `AUTHORITATIVE APPLICATION STATE` prompt section placed before Working Memory, with template metadata serialized as data, never a new instruction; `bot/discord_bot.py`'s composition root now shares one `LockState`/`TaskRuntime`/`TaskCatalog` instance between the provider graph and `ApplicationService`~~ **done** — see `conversation_engine/README.md`'s own "Slice D" section for the exact boundary (no Operating Mode provider — deferred, since a live-settled canonical read would require a write-side settlement step a read-only provider must never perform; no Chaster/personality/preference integration).
+31. ~~Task Catalog Human-Readable Task Content — Candidate B: `title`/`instructions` added to `TaskTemplateVersion` (nullable at the schema level, migration 021; `str | None` on the dataclass, but required non-`None` `str` at the `TaskCatalogAdministration.create_template()`/`add_version()` write boundary — never accepting or writing `None` for a newly created version); `ActiveTaskContextProvider`'s disclosure whitelist and `prompt_builder.py`'s `AUTHORITATIVE APPLICATION STATE` rendering both extended, under the exact same structural trust-boundary guarantees already proven for `completion_requirements` (verified directly with adversarial `title`/`instructions` strings); a legacy row predating this migration renders as an explicit `"(not recorded)"` marker, never fabricated content; the two development seed task templates now carry real, human-readable content~~ **done** — see `task_catalog/README.md`'s own "title/instructions" note and `conversation_engine/README.md`'s own "Candidate B" section for the exact boundary (no richer task ranking/selection, no new eligibility dimensions, no Operating Mode provider, no Chaster, no preferences/limits, no persistent memory, no task-editing UI, no Discord command redesign, no automatic completion, no LLM-driven writes).
 
 ### Roadmap — three explicitly separate tiers
 
@@ -209,7 +219,13 @@ what gets built next:**
   `TaskTemplateVersion`'s own new `LockRequirement`/`lock_requirement`
   field (owned here, not in `task_runtime`, per that slice's own
   ownership rationale) and `TaskCatalog.get_current_version()` — see
-  `task_runtime/README.md` for why. Everything else in the document
+  `task_runtime/README.md` for why. Extended again as part of item 31
+  (Task Catalog Human-Readable Task Content — Candidate B):
+  `TaskTemplateVersion`'s own new `title`/`instructions` fields
+  (migration 021) — see `task_catalog/README.md`'s own note for the
+  exact write-boundary invariant (required `str` at the write API,
+  `str | None` only at the dataclass level for legacy-row
+  readability). Everything else in the document
   (which future domain owns each `TaskInstanceRole`, whether a Task
   Runtime beyond Slice B's own minimal lifecycle should ever exist,
   `SourceReference`, `binding_conditions_snapshot`) remains fully
@@ -456,7 +472,8 @@ goal_management/ # fourth domain module, first independent of the Trust
                  # Manager -> Penalty Engine -> Recovery Plan branch
                  # (see goal_management/README.md)
 task_catalog/    # versioned task template reference layer -- catalog only,
-                 # no task instances, no runtime owner assigned to most roles
+                 # no task instances, no runtime owner assigned to most roles;
+                 # now includes human-readable title/instructions content
                  # (see task_catalog/README.md)
 advanced_mode/   # OperatingMode global singleton + two-stage critical_change
                  # transition process -- no DelegatedAuthorityPolicy, no other

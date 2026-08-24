@@ -55,7 +55,8 @@ def admin(core: CoreDatabase) -> TaskCatalogAdministration:
 
 def _create_kwargs(**overrides) -> dict:
     kwargs = dict(
-        template_id="tmpl-1", category="chore", difficulty="easy", effort="low", duration_minutes=10,
+        template_id="tmpl-1", title="Test task", instructions="Do the test task.",
+        category="chore", difficulty="easy", effort="low", duration_minutes=10,
         required_equipment=(), required_privacy="none", required_context="home", safety_classification="safe",
         eligible_instance_roles=(TaskInstanceRole.RECOVERY,), eligible_operating_modes=("standard",),
         completion_requirements={"type": "checkbox"}, verification_requirements={"method": "text"},
@@ -92,6 +93,81 @@ class TestCreateTemplate:
     def test_whitespace_only_consent_id_raises(self, admin: TaskCatalogAdministration) -> None:
         with pytest.raises(InvalidTaskTemplateVersionError):
             admin.create_template(**_create_kwargs(created_via_consent_id="   "))
+
+
+class TestTitleInstructionsWriteBoundary:
+    """Candidate B write-API boundary (task_catalog/repository.py's own
+    `_normalize_required_text()`): create_template()/add_version()
+    require real `str` title/instructions -- never `None` -- and
+    normalize (strip leading/trailing whitespace) BEFORE constructing
+    the TaskTemplateVersion, so the stored/returned value is always
+    the stripped one, never the raw one."""
+
+    def test_create_template_normalizes_title_and_instructions(
+        self, admin: TaskCatalogAdministration, catalog: TaskCatalog,
+    ) -> None:
+        admin.create_template(**_create_kwargs(
+            title="  Tidy one surface  ", instructions="  Pick a surface and clear it off.  ",
+        ))
+        version = catalog.get_template("tmpl-1", 1)
+        assert version.title == "Tidy one surface"
+        assert version.instructions == "Pick a surface and clear it off."
+
+    def test_add_version_normalizes_title_and_instructions(
+        self, admin: TaskCatalogAdministration, catalog: TaskCatalog,
+    ) -> None:
+        admin.create_template(**_create_kwargs())
+        kwargs = {k: v for k, v in _create_kwargs().items() if k not in ("template_id", "title", "instructions")}
+        admin.add_version(
+            "tmpl-1", title="  Tidy one surface v2  ", instructions="  New instructions here.  ", **kwargs,
+        )
+        version = catalog.get_template("tmpl-1", 2)
+        assert version.title == "Tidy one surface v2"
+        assert version.instructions == "New instructions here."
+
+    def test_create_template_empty_title_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="title must not be empty"):
+            admin.create_template(**_create_kwargs(title=""))
+
+    def test_create_template_whitespace_only_title_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="title must not be empty"):
+            admin.create_template(**_create_kwargs(title="   "))
+
+    def test_create_template_title_over_max_length_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="title must be at most 200 characters"):
+            admin.create_template(**_create_kwargs(title="x" * 201))
+
+    def test_create_template_empty_instructions_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="instructions must not be empty"):
+            admin.create_template(**_create_kwargs(instructions=""))
+
+    def test_create_template_whitespace_only_instructions_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="instructions must not be empty"):
+            admin.create_template(**_create_kwargs(instructions="   "))
+
+    def test_create_template_instructions_over_max_length_raises(self, admin: TaskCatalogAdministration) -> None:
+        with pytest.raises(InvalidTaskTemplateVersionError, match="instructions must be at most 2000 characters"):
+            admin.create_template(**_create_kwargs(instructions="x" * 2001))
+
+    def test_add_version_empty_title_raises(self, admin: TaskCatalogAdministration) -> None:
+        admin.create_template(**_create_kwargs())
+        kwargs = {k: v for k, v in _create_kwargs().items() if k not in ("template_id", "title", "instructions")}
+        with pytest.raises(InvalidTaskTemplateVersionError, match="title must not be empty"):
+            admin.add_version("tmpl-1", title="", instructions="Do it.", **kwargs)
+
+    def test_add_version_empty_instructions_raises(self, admin: TaskCatalogAdministration) -> None:
+        admin.create_template(**_create_kwargs())
+        kwargs = {k: v for k, v in _create_kwargs().items() if k not in ("template_id", "title", "instructions")}
+        with pytest.raises(InvalidTaskTemplateVersionError, match="instructions must not be empty"):
+            admin.add_version("tmpl-1", title="A title", instructions="", **kwargs)
+
+    def test_a_rejected_write_creates_no_row(self, admin: TaskCatalogAdministration, catalog: TaskCatalog) -> None:
+        """Validation happens BEFORE the transaction/INSERT -- a
+        rejected create_template() call must leave no partial state."""
+        with pytest.raises(InvalidTaskTemplateVersionError):
+            admin.create_template(**_create_kwargs(title=""))
+        assert catalog.get_template("tmpl-1", 1) is None
+        assert catalog.get_current_version("tmpl-1") is None
 
 
 class TestAddVersion:
