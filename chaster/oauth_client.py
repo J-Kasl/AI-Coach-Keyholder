@@ -188,3 +188,43 @@ class ChasterOAuthClient:
             raise ChasterTokenExchangeError(
                 "Chaster's token endpoint returned a response this application could not parse for a refresh attempt."
             ) from exc
+
+    def fetch_raw_profile(self, *, access_token: str) -> dict:
+        """DEVELOPMENT/MANUAL-TEST ONLY -- never called from any
+        production code path (chaster/callback_service.py's real
+        callback flow uses `unconfirmed_identity_resolver`, never
+        this method). Exists solely so a developer with real Chaster
+        credentials can manually inspect the actual `/auth/profile`
+        response once, from a local Python REPL or a throwaway
+        script, to confirm `CurrentUser`'s real field names --
+        exactly the same "return a raw, unparsed dict" pattern
+        `chaster/lock_client.py::ChasterLockClient.list_active_locks()`
+        already uses for the same category of not-yet-schema-confirmed
+        response. Never logs the access token, never persists the
+        response, never writes it anywhere -- the caller is entirely
+        responsible for not committing/logging/screenshotting real
+        account data. Confirmed endpoint: GET /auth/profile
+        (operationId AuthMeController_me, chaster_integration_technical_design.md
+        Section 11)."""
+        if not access_token or not access_token.strip():
+            raise ValueError("access_token must be a non-empty string.")
+        try:
+            response = requests.get(
+                "https://api.chaster.app/auth/profile",
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
+            )
+        except requests.RequestException as exc:
+            raise ChasterTokenExchangeError("Network error contacting Chaster's profile endpoint.") from exc
+
+        if response.status_code != 200:
+            raise ChasterTokenExchangeError(f"Chaster's profile endpoint returned HTTP {response.status_code}.")
+
+        try:
+            body = response.json()
+        except ValueError as exc:
+            raise ChasterTokenExchangeError("Chaster's profile endpoint returned a response this application could not parse.") from exc
+
+        if not isinstance(body, dict):
+            raise ChasterTokenExchangeError("Chaster's profile endpoint returned an unexpected response shape (expected an object).")
+        return body

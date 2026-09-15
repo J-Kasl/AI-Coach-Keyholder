@@ -156,3 +156,68 @@ class TestTokenResponseReprRedaction:
         assert "UNIQUE-SECRET-ACCESS" not in text
         assert "UNIQUE-SECRET-REFRESH" not in text
         assert "<redacted>" in text
+
+
+class TestFetchRawProfileDevelopmentDiagnostic:
+    """`fetch_raw_profile` is a development/manual-test-only diagnostic
+    -- never called from any production code path. See its own
+    docstring."""
+
+    def test_calls_the_confirmed_profile_endpoint(self) -> None:
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"_id": "u1"}
+        with patch("chaster.oauth_client.requests.get", return_value=mock_response) as mock_get:
+            _client().fetch_raw_profile(access_token="at")
+        assert mock_get.call_args.args[0] == "https://api.chaster.app/auth/profile"
+
+    def test_sends_the_access_token_as_a_bearer_header(self) -> None:
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"_id": "u1"}
+        with patch("chaster.oauth_client.requests.get", return_value=mock_response) as mock_get:
+            _client().fetch_raw_profile(access_token="real-access-token")
+        assert mock_get.call_args.kwargs["headers"]["Authorization"] == "Bearer real-access-token"
+
+    def test_returns_the_raw_dict_unparsed(self) -> None:
+        raw_body = {"_id": "u1", "username": "wearer1", "email": "someone@example.com"}
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = raw_body
+        with patch("chaster.oauth_client.requests.get", return_value=mock_response):
+            result = _client().fetch_raw_profile(access_token="at")
+        assert result == raw_body
+
+    def test_non_200_response_raises(self) -> None:
+        mock_response = MagicMock(status_code=401)
+        with patch("chaster.oauth_client.requests.get", return_value=mock_response):
+            with pytest.raises(ChasterTokenExchangeError):
+                _client().fetch_raw_profile(access_token="at")
+
+    def test_non_dict_response_body_raises(self) -> None:
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = ["unexpected", "list"]
+        with patch("chaster.oauth_client.requests.get", return_value=mock_response):
+            with pytest.raises(ChasterTokenExchangeError):
+                _client().fetch_raw_profile(access_token="at")
+
+    def test_empty_access_token_is_rejected_before_any_network_call(self) -> None:
+        with patch("chaster.oauth_client.requests.get") as mock_get:
+            with pytest.raises(ValueError):
+                _client().fetch_raw_profile(access_token="")
+            mock_get.assert_not_called()
+
+    def test_error_message_never_contains_the_access_token(self) -> None:
+        mock_response = MagicMock(status_code=401)
+        try:
+            with patch("chaster.oauth_client.requests.get", return_value=mock_response):
+                _client().fetch_raw_profile(access_token="UNIQUE-SECRET-ACCESS-TOKEN")
+            pytest.fail("expected ChasterTokenExchangeError")
+        except ChasterTokenExchangeError as exc:
+            assert "UNIQUE-SECRET-ACCESS-TOKEN" not in str(exc)
+
+    def test_never_wired_into_the_real_callback_service(self) -> None:
+        """Confirms this diagnostic is never reachable from the real
+        production callback flow -- chaster/callback_service.py must
+        never reference fetch_raw_profile."""
+        import inspect
+
+        import chaster.callback_service as module
+        assert "fetch_raw_profile" not in inspect.getsource(module)

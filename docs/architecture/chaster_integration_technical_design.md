@@ -1,4 +1,4 @@
-# Chaster Integration — Technical Design (v0.13)
+# Chaster Integration — Technical Design (v0.15)
 
 > **Status: Draft for review. HTTP callback architecture (Option C)
 > is approved at the architecture level as of v0.4. The
@@ -105,6 +105,37 @@
 > eligibility check. 45 new tests (67 cumulative across both new
 > modules and fixes). No migration; no OAuth scope change (`locks`
 > already requested, already sufficient).
+>
+> **v0.14 change note (real-provider test readiness)**: new Section
+> 25d, "First Real Chaster Provider Test Plan" — a controlled,
+> phased, safe sequence for the eventual first real test, plus
+> genuinely new developer-onboarding facts confirmed from official
+> docs.chaster.app (approval-then-create-application sequence, a
+> private `#developers` Discord channel, redirect-URI registration's
+> exact location not confirmed). One small, justified addition:
+> `ChasterOAuthClient.fetch_raw_profile(access_token)` — a
+> development-only diagnostic mirroring `ChasterLockClient`'s own
+> "return the raw dict" pattern, confirmed by a dedicated test to
+> never be referenced by the real production callback flow. 8 new
+> tests (75 cumulative). No migration; no change to
+> `unconfirmed_identity_resolver`/`unconfirmed_lock_field_extractor`
+> themselves — both remain exactly as they were.
+>
+> **v0.15 change note (pre-real-account sanity check)**: Section 25d
+> corrected — a genuine gap, not cosmetic: the "Developer-application
+> findings" paragraph already mentioned a developer-token path exists
+> ("no OAuth needed"), but Phase 1's own numbered steps never
+> connected to it, implicitly routing schema discovery through the
+> full OAuth/callback/Cloudflare sequence. Confirmed via the same
+> official Endpoints page already cited (developer token and OAuth
+> access token both authenticate identically via the same `Bearer`
+> header) that `fetch_raw_profile()`/`list_active_locks()` need
+> neither OAuth nor Cloudflare to resolve the two schema blockers —
+> only a developer token, called locally. Phase 1 now states this
+> explicitly; the Cloudflare-prerequisites paragraph now states
+> explicitly that it applies only to the separate goal of a real
+> per-Discord-user connection, not to schema discovery. No code
+> changed; no schema guessed; no real request made.
 >
 > **Dependency change policy**: `cryptography` is recommended as a
 > future runtime dependency of `requirements.txt` — it has **not**
@@ -1951,6 +1982,150 @@ status — never silently reported as success:
   have no way to later verify actually happened.
 - **Application/bot process unavailable**: does not affect this
   plane at all — the entire point of the separate-process design.
+
+## 25d. First Real Chaster Provider Test Plan
+
+A controlled, safe, reproducible sequence for the eventual first real
+test — **not to be run until an approved Chaster developer
+application exists.** No step here asks for a secret to be pasted
+into Discord, chat, or any AI tool; every credential stays entirely
+within your own local `.env`/terminal.
+
+### Developer-application findings (confirmed this turn, official docs.chaster.app)
+
+- Developer **area** access requires a form-based approval request
+  first (`docs.chaster.app/api/basics/getting-started`) — *"You will
+  first need access to the developer area. You can request it by
+  filling out this form. Describe what you want to create."* The API
+  is explicitly still in beta.
+- Only **after** that approval can you create an application
+  (`docs.chaster.app/api/basics/create-application`) — confirmed
+  steps: open the developer interface, click "Create an application,"
+  enter a name, save. **Redirect-URI registration is not shown in
+  this specific step's own description** — it is very likely a
+  separate settings field on the created application (standard OAuth
+  practice, and this project's own `chaster_integration_technical_design.md`
+  Section 5 already flags redirect-URI behavior as otherwise
+  unconfirmed) but this was **not directly confirmed** by what this
+  search retrieved — check the actual developer interface once access
+  is granted, rather than assuming.
+- Once approved, you also get access to a **private `#developers`
+  Discord channel** for API questions — a legitimate first-party
+  support channel this project has no access to.
+- Two authentication paths remain confirmed distinct: a **developer
+  token** (tied to your own account only, no OAuth needed — useful
+  for the manual research below) and **OAuth 2** (for other users,
+  what CHASTER-01A's own `chaster connect` uses).
+
+### Phase 1 — OAuth / profile
+
+> **Faster path for schema discovery alone, confirmed via the same
+> official Endpoints page already cited above** (*"you must obtain a
+> developer token or an access token... pass your token in the HTTP
+> Authorization header, prefixed with Bearer"*): `fetch_raw_profile()`
+> and `list_active_locks()` both simply take a bearer token string —
+> neither knows or cares whether it came from OAuth or from a
+> developer token. **If your only goal right now is resolving the
+> `CurrentUser`/`LockForWearer` schemas (Phase 1 step 5, Phase 2 steps
+> 1–2), you do not need to complete steps 1–4 below, run the callback
+> listener, or set up Cloudflare Tunnel at all** — generate a
+> developer token directly from the Chaster developer interface (tied
+> to your own account) and call `fetch_raw_profile(access_token=<dev_token>)`/
+> `list_active_locks(access_token=<dev_token>)` straight from a local
+> Python REPL. The full sequence below (steps 1–4, and Cloudflare) is
+> only actually required for the separate goal of a real *per-Discord-
+> user* connection via `chaster connect` — not for schema discovery
+> itself.
+
+1. Populate local `.env`: `CHASTER_CLIENT_ID`, `CHASTER_CLIENT_SECRET`,
+   `CHASTER_REDIRECT_URI` (matching exactly what's registered with
+   Chaster), `CHASTER_TOKEN_ENCRYPTION_KEY` (generated once, per
+   `chaster/README.md`'s own instructions).
+2. Start the bot process — `setup_hook()` starts the OAuth callback
+   listener automatically once these are set (Section 9).
+3. Send `chaster connect` in Discord; open the returned authorization
+   URL in a browser; complete Chaster's own login/consent screen.
+4. Observe the callback complete (state consumed, code exchanged for
+   real tokens — both fully implemented and real today).
+5. **To capture the real `/auth/profile` response safely**: from a
+   local Python REPL or a throwaway, uncommitted script — never
+   committed to the repository, never pasted into Discord/chat — call
+   `ChasterOAuthClient.fetch_raw_profile(access_token=...)` (new this
+   turn, `chaster/oauth_client.py`) using the real access token your
+   own script obtained via `exchange_code_for_tokens()`. This method
+   is a development-only diagnostic, confirmed never referenced by
+   the real production callback flow (a dedicated test enforces
+   this). It returns the raw, unparsed response dict — inspect its
+   keys locally; do not print/log/commit the actual values if they
+   include personally identifying data (email, etc.).
+6. Use that real, observed shape to write the real `resolve_identity`
+   implementation, replacing `unconfirmed_identity_resolver` at its
+   one call site (`bot/discord_bot.py`'s composition root) — a
+   separate, later implementation step, not part of this test plan
+   itself.
+
+### Phase 2 — lock schema
+
+1. Once a real connection exists (Phase 1 complete and a real
+   implementation wired in), make one authenticated `GET /locks`
+   call — `ChasterLockClient.list_active_locks(access_token=...)`
+   already returns the raw, unparsed list today, with **zero
+   dependency on any unconfirmed field** (Section 25c's own
+   "Option A implementation" subsection) — this call is already
+   safe to make for real right now, independent of Phase 1.
+2. Inspect the real response locally to determine the exact field
+   names for: the lock's own identifier, its type
+   (`LockTypeEnum: chastity | bondage`), and its bondage-safety
+   configuration (`emergencyReleaseEnabled`, confirmed to exist as a
+   *concept* in `BondageSessionConfig`, though its exact containing
+   field path within a `LockForWearer` object is what remains
+   unconfirmed).
+3. Implement `unconfirmed_lock_field_extractor`'s real replacement
+   using only those confirmed field names — no other field should be
+   read speculatively.
+4. Add fixtures/tests built from the **real, confirmed shape** — not
+   real account data. Never commit an actual raw response, a real
+   lock ID, or any other account-identifying value.
+
+### Phase 3 — emergency-unlock provider
+
+Only after Phases 1–2 are both complete:
+
+1. Test active-lock discovery against the real account (already safe
+   to do today, per Phase 2 point 1).
+2. Test the exactly-one-candidate invariant with the real account's
+   actual lock count.
+3. Test eligibility using the now-real extractor.
+4. **Only when explicitly intending to actually test the real
+   emergency-unlock call** — this is the one step with a real,
+   irreversible side effect — invoke it deliberately, on a test lock
+   that actually satisfies the documented prerequisites (bondage type,
+   emergency release enabled), and verify: the real Chaster response,
+   the audit trail (`domain_events`, `source_module='chaster_emergency'`),
+   and that failure paths (a lock lacking the safety feature, etc.)
+   behave exactly as this project's own mocked tests already predict.
+
+**Do not trigger a real emergency-unlock request merely as a side
+effect of testing OAuth or discovery** — Phases 1–2 never call
+`emergency_unlock()` at all; only Phase 3's own explicit, deliberate
+step does.
+
+### Cloudflare prerequisites (not implemented this turn)
+
+**Not a prerequisite for the schema-discovery diagnostic work above**
+(Phase 1's own callout box) — only for a real, per-Discord-user
+`chaster connect` connection. Once a real Chaster application exists
+and you're ready for that separate goal: a domain/subdomain you can
+add one CNAME record to (Section 8, Part B), a configured Cloudflare
+named tunnel routing **only** to the local OAuth callback listener's
+own port (`CHASTER_CALLBACK_BIND_PORT`, default `8420`) — **the
+emergency listener's own port (`CHASTER_EMERGENCY_BIND_PORT`, default
+`8421`) must never be included in any tunnel ingress rule** — and
+`CHASTER_REDIRECT_URI` set to the resulting stable public URL,
+registered exactly in the Chaster developer interface. None of this
+is implemented in this repository; all of it is external
+configuration, by design (Section 8's own repository/Cloudflare
+boundary).
 
 ## 26. CHASTER-01A boundary and open decisions
 
