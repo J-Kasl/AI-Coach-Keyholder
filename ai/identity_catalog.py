@@ -20,11 +20,15 @@ drifted and needs updating, not the other way around.
 
 `CommunicationProfile` values are stored here because they were
 explicitly approved as immutable per-identity metadata (user_onboarding
-approval), but **nothing in this codebase reads them yet** -- no
-Decision phrasing, no Relationship/Decision Engine, no communication
-layer exists to consume them. They exist purely as validated,
-available data for whenever that future, separately-approved work
-begins.
+approval). As of the Scarlett/Hybrid Personality Presentation slice,
+`conversation_engine/identity_adapter.py` reads them (a direct
+passthrough, never a copy) and `conversation_engine/prompt_builder.py`
+renders them into a presentation-only `PERSONALITY / PRESENTATION`
+prompt section -- see `conversation_engine/README.md`'s own "Scarlett"
+section for the exact boundary. Still no Decision phrasing, no
+Relationship/Decision Engine, no Behavioral Learning, and no identity
+archetype/biography text reaches the model -- only the six numeric
+dimensions plus the identity's own catalog id.
 """
 
 from __future__ import annotations

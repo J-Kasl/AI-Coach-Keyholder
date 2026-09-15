@@ -89,6 +89,168 @@ _SEED_DEFINITIONS: dict[str, dict] = {
         verification_requirements={}, reflection_requirements=None,
         lock_requirement=LockRequirement.REQUIRES_LOCKED,
     ),
+    # First real development catalog content (Task Catalog Content
+    # Proposal, Option A -- approved 2026-09 including the single
+    # physical-activity item, "short-walk"). Ten new templates,
+    # additive alongside the two original dev-seed-* fixtures above,
+    # which remain untouched. Every one of these uses the same
+    # unused-today descriptive fields (required_equipment/privacy/
+    # context, safety_classification, effort) at the same values as
+    # the original two, since nothing in task_runtime's own eligibility
+    # logic reads them yet (see task_catalog/README.md). Only
+    # "locked-reflection-entry" carries LockRequirement.REQUIRES_LOCKED
+    # -- every other new template is LockRequirement.NONE.
+    "tidy-one-surface": dict(
+        title="Tidy one surface",
+        instructions=(
+            "Pick one flat surface in your home, such as a desk, counter, or table. "
+            "Put loose items away and wipe the surface down if needed. Spend about "
+            "ten minutes on it."
+        ),
+        category="chore", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "The chosen surface is visibly clear and wiped down."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "clear-one-inbox": dict(
+        title="Clear one inbox to zero",
+        instructions=(
+            "Pick one inbox -- email, a messaging app, or physical mail -- and "
+            "process it down to zero: reply, file, delete, or archive each item. "
+            "Spend up to twenty minutes on it."
+        ),
+        category="organization", difficulty="medium", effort="low", duration_minutes=20,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "The chosen inbox has no unprocessed items left."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "five-minute-declutter": dict(
+        title="Five-minute declutter sprint",
+        instructions=(
+            "Set a timer for five minutes and put away as many out-of-place items "
+            "as you can find in one room. When the timer ends, stop."
+        ),
+        category="chore", difficulty="easy", effort="low", duration_minutes=5,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "A five-minute decluttering sprint was completed in one room."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "plan-tomorrow": dict(
+        title="Plan tomorrow in three lines",
+        instructions=(
+            "Write down the three most important things you want to get done "
+            "tomorrow. Keep it short -- one line each. Put the list somewhere you "
+            "will actually see it in the morning."
+        ),
+        category="planning", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "A three-item plan for tomorrow has been written down."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "evening-reset": dict(
+        title="Evening reset routine",
+        instructions=(
+            "Spend ten minutes preparing for tomorrow: lay out what you need, tidy "
+            "your immediate space, and set out anything you tend to forget. The "
+            "goal is a calmer start tomorrow, not a perfect one."
+        ),
+        category="routine", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "An evening reset routine was completed."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "focused-work-block": dict(
+        title="One focused block, no phone",
+        instructions=(
+            "Pick one task you have been putting off. Put your phone out of reach, "
+            "set a timer for twenty-five minutes, and work on only that task until "
+            "the timer ends."
+        ),
+        category="focus", difficulty="medium", effort="low", duration_minutes=25,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "A single twenty-five-minute focused work block was completed on one task."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "finish-one-postponed-task": dict(
+        title="Finish one small postponed task",
+        instructions=(
+            "Think of one small task you have been putting off for at least a "
+            "week -- something that takes under thirty minutes. Do it now, start "
+            "to finish."
+        ),
+        category="organization", difficulty="medium", effort="low", duration_minutes=30,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "One previously postponed small task was completed start to finish."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "short-walk": dict(
+        title="Take a short walk",
+        instructions=(
+            "Go for an ordinary walk outside or, if that is not possible, walk "
+            "indoors for the same amount of time. Ten minutes is enough -- this "
+            "is about movement, not exercise performance."
+        ),
+        category="movement", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "A short, ordinary walk was completed."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "evening-journal-entry": dict(
+        title="Write one journal entry",
+        instructions=(
+            "Spend ten minutes writing about how today actually went -- what "
+            "worked, what didn't, and one thing you'd do differently tomorrow. No "
+            "particular format is required."
+        ),
+        category="reflection", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "One journal entry reflecting on the day was written."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.NONE,
+    ),
+    "locked-reflection-entry": dict(
+        title="Reflection journal entry (locked-only)",
+        instructions=(
+            "Spend ten minutes writing about how you're feeling about your "
+            "current commitment today -- what's easy, what's hard, and one thing "
+            "you're proud of. This task is only offered while you have reported "
+            "yourself as locked; that eligibility is based on your user-reported "
+            "lock state, not on independent physical verification."
+        ),
+        category="reflection", difficulty="easy", effort="low", duration_minutes=10,
+        required_equipment=(), required_privacy="none", required_context="home",
+        safety_classification="safe", eligible_instance_roles=(TaskInstanceRole.PRIMARY,),
+        eligible_operating_modes=("standard", "advanced"),
+        completion_requirements={"description": "One reflection journal entry was written."},
+        verification_requirements={}, reflection_requirements=None,
+        lock_requirement=LockRequirement.REQUIRES_LOCKED,
+    ),
 }
 
 

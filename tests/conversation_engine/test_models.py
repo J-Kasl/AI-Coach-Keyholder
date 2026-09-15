@@ -150,7 +150,7 @@ class TestResponseContextSnapshot:
     def test_is_frozen(self) -> None:
         snapshot = ResponseContextSnapshot(
             response_category=ResponseCategory.ERROR_FALLBACK, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             context_fragments={},
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
@@ -160,7 +160,7 @@ class TestResponseContextSnapshot:
         fragment = ConversationContextFragment(namespace="ns", data={})
         snapshot = ResponseContextSnapshot(
             response_category=ResponseCategory.ERROR_FALLBACK, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             context_fragments={"ns": fragment},
         )
         assert isinstance(snapshot.context_fragments, MappingProxyType)
@@ -172,7 +172,7 @@ class TestResponseContextSnapshot:
         with pytest.raises(ValueError, match="does not match"):
             ResponseContextSnapshot(
                 response_category=ResponseCategory.ERROR_FALLBACK, current_user_message="hi",
-                language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+                language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
                 context_fragments={"wrong_key": fragment},
             )
 

@@ -22,7 +22,7 @@ def _profile(**overrides) -> CommunicationProfile:
 def _snapshot(current_user_message: str = "hello") -> ResponseContextSnapshot:
     return ResponseContextSnapshot(
         response_category=ResponseCategory.COACHING_DIALOGUE, current_user_message=current_user_message,
-        language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+        language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
         context_fragments={},
     )
 

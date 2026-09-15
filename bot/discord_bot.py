@@ -37,6 +37,11 @@ import discord
 
 from application.models import IncomingMessage
 from application.service import ApplicationService
+from chaster.callback_listener import ChasterCallbackListener
+from chaster.callback_service import ChasterCallbackService, unconfirmed_identity_resolver
+from chaster.oauth_client import ChasterOAuthClient
+from chaster.repository import ChasterConnectionRepository
+from chaster.token_encryptor import TokenEncryptor, TokenEncryptorConfigurationError
 from conversation_engine.context_providers.active_task_provider import ActiveTaskContextProvider
 from conversation_engine.context_providers.lock_state_provider import LockStateContextProvider
 from conversation_engine.engine import ConversationEngine
@@ -66,6 +71,57 @@ class CoachKeyholderBot(discord.Client):
         self.db = db
         self.clock = clock
         self.application_service = application_service
+        self._chaster_listener: ChasterCallbackListener | None = None
+
+    async def setup_hook(self) -> None:
+        """Called once, on this same event loop, before the websocket
+        connects (discord.py's own documented lifecycle -- see
+        docs/architecture/chaster_integration_technical_design.md
+        Section 9). Starts the Chaster OAuth callback listener IF
+        Chaster is fully configured -- CRITICAL: any failure here is
+        caught and logged, never allowed to propagate, since an
+        uncaught exception in setup_hook() would prevent Discord
+        itself from ever connecting. Chaster callback infrastructure
+        being unavailable must never take down the whole bot."""
+        if self.application_service.chaster_connections is None or self.application_service.chaster_oauth_client is None:
+            logger.info("Chaster is not configured -- callback listener not started.")
+            return
+        try:
+            service = ChasterCallbackService(
+                states=self.application_service.chaster_states,
+                connections=self.application_service.chaster_connections,
+                oauth_client=self.application_service.chaster_oauth_client,
+                resolve_identity=unconfirmed_identity_resolver,
+            )
+
+            async def on_callback(state: str | None, code: str | None, error: str | None) -> str:
+                outcome = await asyncio.to_thread(
+                    service.handle_callback, state=state, code=code, error=error, now=self.clock.now(),
+                )
+                return outcome.message
+
+            listener = ChasterCallbackListener(
+                bind_host=self.config.chaster_callback_bind_host,
+                bind_port=self.config.chaster_callback_bind_port,
+                on_callback=on_callback,
+            )
+            await listener.start()
+            self._chaster_listener = listener
+        except Exception:
+            logger.exception(
+                "Chaster callback listener failed to start -- Chaster integration is unavailable "
+                "this run, but Discord itself is unaffected."
+            )
+            self._chaster_listener = None
+
+    async def close(self) -> None:
+        if self._chaster_listener is not None:
+            try:
+                await self._chaster_listener.stop()
+            except Exception:
+                logger.exception("Error stopping the Chaster callback listener during shutdown -- continuing.")
+            self._chaster_listener = None
+        await super().close()
 
     async def on_ready(self) -> None:
         logger.info("Logged in as %s (id=%s)", self.user, self.user.id if self.user else "?")
@@ -226,9 +282,29 @@ def main() -> None:
         queue=conversation_queue, providers=context_providers,
     )
 
+    # CHASTER-01A: TokenEncryptor/OAuth client are genuinely optional --
+    # constructed only if fully configured; a missing/invalid key or
+    # incomplete client config disables Chaster (chaster connect
+    # replies "not configured") without preventing the bot itself from
+    # starting. Never generates a replacement key.
+    chaster_connections = None
+    chaster_oauth_client = None
+    if config.chaster_token_encryption_key:
+        try:
+            token_encryptor = TokenEncryptor(config.chaster_token_encryption_key)
+            chaster_connections = ChasterConnectionRepository(config.db_path, core=core, encryptor=token_encryptor)
+        except TokenEncryptorConfigurationError as e:
+            logger.error("Chaster token encryption is misconfigured -- Chaster integration disabled: %s", e)
+    if config.chaster_client_id and config.chaster_client_secret and config.chaster_redirect_uri:
+        chaster_oauth_client = ChasterOAuthClient(
+            client_id=config.chaster_client_id, client_secret=config.chaster_client_secret,
+            redirect_uri=config.chaster_redirect_uri,
+        )
+
     application_service = ApplicationService(
         config.db_path, core=core, conversation_engine=conversation_engine,
         lock_state=lock_state, task_runtime=task_runtime, task_catalog=task_catalog,
+        chaster_connections=chaster_connections, chaster_oauth_client=chaster_oauth_client,
     )
     bot = build_bot(config, db, clock, application_service)
     bot.run(config.discord_token, log_handler=None)

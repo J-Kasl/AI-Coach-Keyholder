@@ -4,6 +4,11 @@ discord.py>=2.7.1
 # Phase 1+ (the Ollama client currently just uses plain requests/httpx over its REST API)
 requests>=2.32.0
 
+# CHASTER-01 -- Fernet authenticated encryption for stored per-user
+# Chaster OAuth tokens (chaster/token_encryptor.py). Never raw AES-GCM;
+# see docs/architecture/chaster_integration_technical_design.md Section 10.
+cryptography>=42.0.0
+
 # Note: SQLite is part of the Python stdlib, no dependency needed.
 # Note: .env is parsed by our own minimal loader in core/config.py --
 #       python-dotenv is deliberately not used (see the comment in that file).

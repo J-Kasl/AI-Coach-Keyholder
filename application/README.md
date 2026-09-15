@@ -129,9 +129,21 @@ fallback.
   self-construction as a fallback for callers that don't pass them.
   `lock`/`task` are
   each their own command family (`register_family`, the same pattern
-  `mode` already established) — an invalid `lock ...`/`task ...`
-  input gets a deterministic family reply, never falling through to
-  Conversation Engine. `task request` reads the current
+  `mode` already established) — **Command Family Fallback Precision**:
+  the family reply fires only when the *entire* trimmed/lowercased
+  input is exactly the bare family word (`"lock"`, `"task"`, `"mode"`,
+  and, as of CHASTER-01A, `"chaster"`)
+  alone, never merely because the input starts with it. A multi-word
+  input starting with a family word that is not an exact registered
+  command (a near-miss typo like `"task compelte"`, or ordinary
+  conversation that happens to start with a common English word, e.g.
+  `"task is really weighing on me today, can we talk?"`) now falls
+  through as ordinary unmatched text, reaching Conversation Engine
+  exactly like any other unmatched multi-word input — deliberately not
+  fuzzy matching, an exact string-equality check only. Exact-command
+  matching itself is unaffected (`"task request"` etc. are still
+  matched by the router's own exact-handler lookup first, before the
+  family lookup ever runs). `task request` reads the current
   `LockKnowledgeState`, filters eligible templates via
   `TaskRuntime.get_eligible_templates()`, and picks one
   deterministically (`task_runtime.selection.select_eligible_template()`
@@ -141,7 +153,35 @@ fallback.
   `TaskAssignment*Error`/`TaskNotEligibleError` gets its own specific
   `except` clause mapped to a safe, generic reply — the same
   discipline `mode`'s own handlers already use, never a raw exception
-  message reaching the user. **Verified directly, not just claimed:**
+  message reaching the user.
+
+  **Deterministic Task Command Human-Readable Content** (extends
+  Candidate B, `task_catalog`'s own `title`/`instructions` fields, to
+  the deterministic command replies): `task active` reads the
+  assignment's own exact pinned `(template_id, template_version)` via
+  `self.task_catalog.get_template(...)` — never `current_version` —
+  and replies `"Active: {title} ({template_id}, assigned {timestamp}).`;
+  `task request`'s success reply is `"Assigned: {title}."`, reusing
+  the already-selected `TaskTemplateVersion` directly rather than a
+  second lookup; the "already have one" branch resolves the existing
+  assignment's own pinned version the same way `task active` does. A
+  legacy row with `title=None` (a pre-migration-021 row) renders as the
+  literal string `"(not recorded)"` in all three replies — the exact
+  same convention `conversation_engine/prompt_builder.py` already uses
+  for the same case, never fabricated. `instructions` is deliberately
+  **not** shown in any of these three replies (out of scope for this
+  slice — a terse command reply is the wrong place for a full
+  instructions paragraph); `task complete`/`task cancel` replies were
+  left generic (`"Completed."`/`"Cancelled."`) in this slice —
+  extended to the same title-aware convention by the follow-up
+  **Title-aware `task complete`/`task cancel` confirmation** slice
+  (`"Completed: {title}."`/`"Cancelled: {title}."`, same `"(not
+  recorded)"`/pinned-historical-version invariants, `_resolve_task()`'s
+  own shared helper now resolving the template after a successful
+  transition rather than before it — `assignment` is read before
+  `resolve()` either way, so its own pinned version is unaffected by
+  when the lookup happens).
+  **Verified directly, not just claimed:**
   known `lock`/`task` commands never invoke the model at all; ordinary
   conversational text mentioning lock/task-like intent (e.g. "I'm
   locked right now", "I finished it") never creates a `lock_reports`
@@ -153,6 +193,17 @@ fallback.
   wired into `bot/discord_bot.py`'s own startup (which never creates
   domain data today) and not a migration (schema only, per this
   project's own convention).
+- **CHASTER-01A — `chaster connect`.** Registered exactly like every
+  other command (`register("chaster connect", ..., handler)` +
+  `register_family("chaster", ...)`) — never model-generated, never
+  reachable before onboarding completes (the router itself is never
+  reached until then). `ApplicationService.__init__` gained new,
+  optional `chaster_connections`/`chaster_oauth_client` DI parameters
+  (`self.chaster_states` is always self-constructed -- it needs no
+  encryption or client credentials); if either optional parameter is
+  `None`, the handler replies that Chaster is "not configured" rather
+  than raising. See `chaster/README.md` for the full module boundary
+  and its own honestly-flagged limitation (identity resolution).
 - **First Testable Keyholder Milestone, Slice D.** `ApplicationService.__init__`
   gained new, optional `lock_state`/`task_runtime`/`task_catalog`
   parameters — see `conversation_engine/README.md`'s own "Slice D"

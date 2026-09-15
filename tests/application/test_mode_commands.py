@@ -98,13 +98,28 @@ class TestModeStatus:
         b = service.handle_message(_incoming("mode status", external_message_id="m5"))
         assert a.text == b.text
 
-    def test_unknown_mode_command_gets_the_mode_family_deterministic_reply(self, service: ApplicationService) -> None:
-        """The 'mode' command-family invalid_handler catches this now --
-        not the generic unrecognized-text fallback, and never
-        Conversation Engine (CE-25 -- known family tokens never reach it)."""
+    def test_bare_mode_word_is_the_status_alias_not_the_family_fallback(self, service: ApplicationService) -> None:
+        """"mode" alone is its OWN registered exact command (an alias
+        for `mode status`, application/service.py's own
+        `register("mode", ...)`), which takes priority over the family
+        fallback -- exact-match still runs first, unaffected by this
+        slice. The family fallback for "mode" can only ever fire on a
+        genuinely unregistered bare word; "mode" itself never reaches
+        it, before or after this change."""
+        _complete_onboarding(service)
+        result = service.handle_message(_incoming("mode", external_message_id="m4"))
+        assert "current mode:" in result.text.lower()
+
+    def test_mode_frobnicate_no_longer_gets_the_family_reply(self, service: ApplicationService) -> None:
+        """Command Family Fallback Precision (Option A): a near-miss
+        multi-word input starting with "mode" is no longer intercepted
+        by the family fallback -- it now falls through as ordinary
+        unmatched text (this fixture has no Conversation Engine
+        configured, so the generic unrecognized-text reply surfaces)."""
         _complete_onboarding(service)
         result = service.handle_message(_incoming("mode frobnicate", external_message_id="m4"))
-        assert "not a recognized `mode` command" in result.text.lower()
+        assert "not a recognized `mode` command" not in result.text.lower()
+        assert "i don't recognize that yet" in result.text.lower()
 
 
 class TestModeRequestAdvanced:

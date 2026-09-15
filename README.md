@@ -62,22 +62,37 @@ real architectural findings surfaced while building it:
 
 ## Project status
 
-**1081 passing tests** across the whole repository (`pytest`), including
+**1273 passing tests** across the whole repository (`pytest`), including
 two repository-wide guard tests: one that mechanically confirms no
 production code outside `infrastructure/clock.py` calls
 `datetime.now()`/`datetime.utcnow()` directly, and one that confirms
 every `BOOTSTRAP_DEFAULT`-tagged constant uses the agreed structured
 form (`tests/test_bootstrap_default_tags.py` — see "Bootstrap defaults"
 in `trust_manager/README.md` and `penalty_engine/README.md`). This
-figure was corrected from a prior revision's stale count (1017) once
-found to be out of date during the Task Catalog Human-Readable Task
-Content slice below — noted here rather than silently updated, since
-letting a stale count stand unremarked is exactly the kind of
-documentation drift this project's own "Roadmap" section already
-guards against.
+figure has been corrected several times from stale counts once found
+to be out of date: 1017 during the Task Catalog Human-Readable Task
+Content slice below, 1081 (this section's own count, left un-updated
+by that slice's deliberately narrow scope — its own instructions
+touched only `application/README.md`, not this file) after the
+Deterministic Task Command Human-Readable Content slice, item 32
+below, 1091 after the Title-aware `task complete`/`task cancel`
+confirmation slice, item 33 below, 1122 after the Scarlett/Hybrid
+Personality Presentation slice, item 34 below (corrected here from an
+earlier, wrong 1101 written into this same paragraph during that
+slice — a transcription mistake in the documentation update itself,
+not a re-run of the suite), 1143 after that same item's own identity-lifecycle acceptance-hardening pass (no new
+roadmap item — this extended and verified item 34, not a new
+capability; see `conversation_engine/README.md`'s own "Scarlett"
+section for the added acceptance coverage), 1166 after Command Family
+Fallback Precision, item 35 below, 1172 after the Task Catalog
+Content slice, item 36 below, and 1273 after CHASTER-01A (OAuth
+Connection Foundation), item 37 below. Noted here rather than
+silently updated each time, since letting a stale count stand
+unremarked is exactly the kind of documentation drift this project's
+own "Roadmap" section already guards against.
 
-Twenty-one sequential database migrations are applied so far
-(`database/migrations/001` through `021`), covering the initial Phase 0
+Twenty-two sequential database migrations are applied so far
+(`database/migrations/001` through `022`), covering the initial Phase 0
 schema, the transactional outbox, Trust Manager, the trust
 recalculation pipeline, Penalty Engine, the startup lease, Extension,
 Recovery Plan, Recovery Credit, Goal Management, the application
@@ -94,7 +109,10 @@ enforcing at most one active assignment per user) together with Task
 Catalog's own new `lock_requirement` column, and (021) Task Catalog's
 own new `title`/`instructions` columns on `task_template_versions`
 (nullable, no fabricated default -- see
-`task_catalog/README.md`). See
+`task_catalog/README.md`), and (022) CHASTER-01A's own
+`chaster_oauth_states`/`chaster_connections` tables (both nullable-
+column-free, no fabricated defaults, encrypted-token TEXT columns --
+see `chaster/README.md`). See
 [`database/migrations/README.md`](database/migrations/README.md) for
 the hard rule migrations must follow (never destructive to user data).
 
@@ -133,9 +151,15 @@ all been confirmed there.
 26. ~~Preference & Limits Profile, Foundation Slice 1 only: pure process-independent domain model (`ProfileOwnerKey`, `ProfileTopicId`, `ProfileDisposition`, `ProfileEntry`, `PreferenceProfileSnapshot`, `TopicState`, `resolve_topic_state()`), at-most-one-active-entry-per-topic cardinality enforced constructionally~~ **done** — see `preference_profile/README.md` for the exact boundary (no repository, no persistence, no import/consent/eligibility integration, no age-gate Protocol, zero runtime wiring anywhere in the project).
 27. ~~First Testable Keyholder Milestone, Slice A — Lock State: user-reported lock status only (`LockReportStatus`, `LockKnowledgeState` with an explicit `UNKNOWN` absence state, `LockReport`), append-only persistence (migration 019) with a deterministic `sequence_number` ordering tiebreaker, governed read/write split (`LockState`/`LockStateAdministration`)~~ **done** — see `lock_state/README.md` for the exact boundary (user-reported only, never a claim of verified physical reality; no Discord commands, no `ApplicationService`/Conversation Engine integration yet).
 28. ~~First Testable Keyholder Milestone, Slice B — Task Runtime: `TaskAssignment` lifecycle (`ACTIVE`/`COMPLETED`/`CANCELLED`), authoritative eligibility enforcement re-derived inside `assign_task()` itself (never trusting a caller-supplied decision), database-level composite foreign key pinning an assignment to its exact immutable template version, database-level partial unique index enforcing at-most-one-active-assignment-per-user; `task_catalog`'s own new `LockRequirement`/`lock_requirement` field and `get_current_version()` read method~~ **done** — see `task_runtime/README.md` for the exact boundary (lock-state eligibility dimension only, no selection algorithm, no Discord/Conversation Engine integration yet). Error classification fixed after review — `TaskAssignmentReferentialIntegrityError` is now distinct from `TaskAssignmentConcurrencyError` (an invalid `user_id` FK is no longer mislabeled as an active-assignment race), and error messages no longer include raw identifiers.
-29. ~~First Testable Keyholder Milestone, Slice C — Discord integration for both Slice A and B: `lock status`/`lock report locked`/`lock report unlocked`, `task request`/`task active`/`task complete`/`task cancel`, both as their own `register_family` command families (never falling through to Conversation Engine); `LockState`/`LockStateAdministration`/`TaskCatalog`/`TaskRuntime`/`TaskRuntimeAdministration` constructed directly inside `ApplicationService.__init__` (the same pattern `advanced_mode` uses, no DI from `bot/discord_bot.py`); `task_runtime.selection.select_eligible_template()` (deterministic, lowest `template_id`); `scripts/seed_development_tasks.py` (standalone, idempotent, explicitly-invoked maintenance script for two neutral development task templates)~~ **done** — see `application/README.md` for the exact boundary and its own directly-verified invariants (known commands never reach the model, ordinary conversational text never writes domain state, deterministic replies never enter Working Memory).
+29. ~~First Testable Keyholder Milestone, Slice C — Discord integration for both Slice A and B: `lock status`/`lock report locked`/`lock report unlocked`, `task request`/`task active`/`task complete`/`task cancel`, both as their own `register_family` command families (never falling through to Conversation Engine for the bare family word or an exact command — see item 35 below for a later refinement narrowing exactly which inputs the family fallback itself catches); `LockState`/`LockStateAdministration`/`TaskCatalog`/`TaskRuntime`/`TaskRuntimeAdministration` constructed directly inside `ApplicationService.__init__` (the same pattern `advanced_mode` uses, no DI from `bot/discord_bot.py`); `task_runtime.selection.select_eligible_template()` (deterministic, lowest `template_id`); `scripts/seed_development_tasks.py` (standalone, idempotent, explicitly-invoked maintenance script for two neutral development task templates)~~ **done** — see `application/README.md` for the exact boundary and its own directly-verified invariants (known commands never reach the model, ordinary conversational text never writes domain state, deterministic replies never enter Working Memory).
 30. ~~First Testable Keyholder Milestone, Slice D — Authoritative Conversation Context Integration: `ConversationContextProvider.provide_context()` gained an explicit `subject_key` parameter (providers are static/stateless, shared across every subject, verified under real thread concurrency); `LockStateContextProvider`/`ActiveTaskContextProvider` (`conversation_engine/context_providers/`), read-only, always returning a real fragment on a successful read (including `UNKNOWN`/no-active-task — never conflating "successfully determined nothing" with "read failed"); a new deterministic `AUTHORITATIVE APPLICATION STATE` prompt section placed before Working Memory, with template metadata serialized as data, never a new instruction; `bot/discord_bot.py`'s composition root now shares one `LockState`/`TaskRuntime`/`TaskCatalog` instance between the provider graph and `ApplicationService`~~ **done** — see `conversation_engine/README.md`'s own "Slice D" section for the exact boundary (no Operating Mode provider — deferred, since a live-settled canonical read would require a write-side settlement step a read-only provider must never perform; no Chaster/personality/preference integration).
 31. ~~Task Catalog Human-Readable Task Content — Candidate B: `title`/`instructions` added to `TaskTemplateVersion` (nullable at the schema level, migration 021; `str | None` on the dataclass, but required non-`None` `str` at the `TaskCatalogAdministration.create_template()`/`add_version()` write boundary — never accepting or writing `None` for a newly created version); `ActiveTaskContextProvider`'s disclosure whitelist and `prompt_builder.py`'s `AUTHORITATIVE APPLICATION STATE` rendering both extended, under the exact same structural trust-boundary guarantees already proven for `completion_requirements` (verified directly with adversarial `title`/`instructions` strings); a legacy row predating this migration renders as an explicit `"(not recorded)"` marker, never fabricated content; the two development seed task templates now carry real, human-readable content~~ **done** — see `task_catalog/README.md`'s own "title/instructions" note and `conversation_engine/README.md`'s own "Candidate B" section for the exact boundary (no richer task ranking/selection, no new eligibility dimensions, no Operating Mode provider, no Chaster, no preferences/limits, no persistent memory, no task-editing UI, no Discord command redesign, no automatic completion, no LLM-driven writes).
+32. ~~Deterministic Task Command Human-Readable Content: `task active`/`task request` (both the success and already-active-task replies) now show the assignment's own pinned `TaskTemplateVersion.title` — resolved via `self.task_catalog.get_template(assignment.template_id, assignment.template_version)`, the exact same historical-version invariant `ActiveTaskContextProvider` already enforces, never `current_version`; a legacy `title=None` row renders as the same `"(not recorded)"` marker `prompt_builder.py` already uses, reused rather than reinvented; `instructions` deliberately not shown in any deterministic reply (a terse command reply is the wrong place for a full paragraph); `task complete`/`task cancel` replies (`"Completed."`/`"Cancelled."`) left generic in this slice (extended by item 33 below)~~ **done** — see `application/README.md`'s own note under Slice C for the exact boundary (no change to task selection/ranking/eligibility, task runtime, Task Catalog schema, conversation-engine/prompt behavior, write boundaries, or automatic completion).
+33. ~~Title-aware `task complete`/`task cancel` confirmation: extends item 32's own convention to the two remaining `task ...` replies — `"Completed: {title}."`/`"Cancelled: {title}."`, resolving the assignment's own exact pinned `(template_id, template_version)` the same way, the same `"(not recorded)"` marker for a legacy `title=None` row, `instructions` still never shown. `_resolve_task()`'s shared helper (used by both `_handle_task_complete`/`_handle_task_cancel`) reads the active assignment before calling `resolve()`, then resolves the template after a successful transition — the assignment's own pinned version is unaffected by transition timing either way. The state transitions themselves (`ACTIVE → COMPLETED`/`ACTIVE → CANCELLED`) are unchanged — only the confirmation text changed~~ **done** — see `application/README.md`'s own note under Slice C for the exact boundary (same exclusions as item 32: no task selection/ranking/eligibility, task runtime, Task Catalog schema, conversation-engine/prompt behavior, write boundaries, or automatic completion changes).
+34. ~~Scarlett — Hybrid Personality Presentation: the first real personality presentation layer. `ResponseContextSnapshot` gained a sixth core field, `identity_id: str`, threaded through `assemble_context()`/`build_response_context()`; `prompt_builder.py`'s system-message assembly was reordered to SYSTEM BOUNDARIES + category rules → **AUTHORITATIVE APPLICATION STATE** → **PERSONALITY / PRESENTATION** → language (personality used to render *before* domain state — the wrong precedence); the old bare "Tone guidance" line was replaced with an explicit, in-prompt-worded `PERSONALITY / PRESENTATION` block stating its own scope (tone/phrasing only, never authority, never overrides authoritative state or system boundaries, task/conversation content stays data regardless of tone) — `_SYSTEM_BOUNDARIES` itself untouched. Reuses the already-existing, already-working per-user onboarding identity-selection mechanism (`application/onboarding_service.py`) rather than inventing a new one — Scarlett is simply one of the 15 catalog identities, fully selectable and correctly wired, with no Scarlett-specific code in `conversation_engine`; deliberately does **not** add any mechanism that pre-selects/defaults a user to Scarlett without that existing choice, since nothing in the current architecture makes that strictly necessary. Uses Scarlett's real approved `CommunicationProfile` (`docs/architecture/ai_identity_technical_design.md` Section 10: warmth 0.5, humor 0.4, teasing 0.5, assertiveness 0.9, formality 0.3, verbosity 0.4), not a differing value set a handoff prompt suggested~~ **done** — see `conversation_engine/README.md`'s own "Scarlett — Hybrid Personality Presentation" section for the exact boundary (no Chaster, no preferences/limits, no persistent personality preferences, no onboarding-flow redesign, no advanced mode, no relationship/decision engine, no new task ranking/eligibility, no `_SYSTEM_BOUNDARIES` changes, no migration).
+35. ~~Command Family Fallback Precision: `application/router.py`'s `register_family()`/`route()` family fallback now fires only when the entire trimmed/lowercased input equals the bare family word (`"lock"`, `"task"`, `"mode"`) exactly — never merely because the input starts with it. Fixes a real, concrete UX gap: an ordinary conversational sentence starting with a common English word (`"task is really weighing on me today, can we talk?"`) or a near-miss command typo (`"task compelte"`) used to be swallowed by the deterministic family-invalid reply instead of reaching Conversation Engine; both now fall through as ordinary unmatched text, exactly like any other unmatched multi-word input. Exact-command matching itself (`"task request"`, `"lock status"`, etc.) is completely unaffected — still checked first, before the family lookup ever runs. Deliberately not fuzzy/edit-distance matching, not a heuristic classifier, not model-based intent detection — an exact string-equality check only. `_SYSTEM_BOUNDARIES` untouched~~ **done** — see `application/README.md`'s own note for the exact boundary (no change to personality, Working Memory, lock/task semantics, or any exact command's behavior; the accepted trade-off is that multi-word near-miss typos are no longer auto-corrected by a family reply and instead reach the model as ordinary conversation).
+36. ~~Task Catalog Content Proposal, Option A: the first real development task catalog content, added to `scripts/seed_development_tasks.py::_SEED_DEFINITIONS` alongside (not replacing) the two original `dev-seed-*` fixtures. Ten new templates spanning seven categories (`chore`, `organization`, `planning`, `routine`, `focus`, `movement`, `reflection`) — nine `LockRequirement.NONE`, one (`locked-reflection-entry`) `REQUIRES_LOCKED`, preserving the exact same user-reported-only epistemic wording `dev-seed-locked-chore` already established. Content was proposed by Claude, explicitly reviewed against a content-boundary checklist (no sexual/dangerous/self-harm/financial-legal-risk content, no physical lock verification claims, no external services), and approved item-by-item by Jiří before being written — including an explicit A/B decision on whether to keep the one physical-activity item (`short-walk`); Option A (keep) was chosen. Catalog size after seeding: 12 templates, idempotence re-verified~~ **done** — see `task_catalog/README.md`/`scripts/seed_development_tasks.py`'s own comments for the exact content; no change to `task_catalog`/`task_runtime` schema or selection logic, no migration, no new eligibility dimension.
+37. ~~CHASTER-01A — OAuth Connection Foundation: a new `chaster/` package (`token_encryptor.py` using `cryptography.fernet.Fernet`, never raw AES-GCM or `ttl=`; `models.py`; `repository.py` for `chaster_oauth_states`/`chaster_connections`, atomic single-use state consumption proven with real concurrent threads; `oauth_client.py` built only from the two officially confirmed Chaster endpoints; `callback_service.py`; `callback_listener.py`, the project's only `aiohttp.web` server), migration 022, a `chaster connect` Discord command wired through the existing deterministic router exactly like `lock`/`task`/`mode`, and `CoachKeyholderBot.setup_hook()`/`close()` starting/stopping the localhost-only callback listener with startup failure explicitly unable to prevent Discord itself from starting. All Chaster HTTP traffic mocked in tests -- no real credentials needed for the 101 new tests. `core/config.py`/`.env.example` extended with clearly-separated non-secret and secret Chaster configuration, all optional. **Known, explicitly flagged limitation**: confirming which Chaster account authorized a connection needs an authenticated identity endpoint this project's research never confirmed and this slice's own instructions forbade guessing -- isolated behind an injectable `resolve_identity` dependency; production wiring always fails safely at this one step until a future slice resolves it. No lock fetching, no provider observations (CHASTER-01B), no change to `lock_state`/`task_runtime`, no `chaster status`/`disconnect`, no emergency-override mechanism (a separate, still-pending hard requirement)~~ **done** -- see `chaster/README.md` for the exact boundary and `docs/architecture/chaster_integration_technical_design.md` for the full design history.
 
 ### Roadmap — three explicitly separate tiers
 
@@ -164,6 +188,19 @@ been built; item 19 above).
 
 **3. Drafts awaiting their own separate approval — not a queue of
 what gets built next:**
+- **Chaster integration — `planned / research` only, NOT implemented.**
+  Full research findings, epistemic model, credential/security model,
+  and the proposed first slice (**CHASTER-01**: OAuth connection +
+  read-only, on-demand provider state) are written up in
+  [`docs/architecture/chaster_integration_technical_design.md`](docs/architecture/chaster_integration_technical_design.md)
+  — **draft, not approved for implementation**, same status
+  convention as every other document in this section. `core/config.py`'s
+  existing `chaster_api_token` field remains exactly what it always
+  was: an unread, scaffolded placeholder (`# Phase 7`), not an active
+  integration. CHASTER-01 remains **proposed / awaiting approval** —
+  several explicit decisions (encryption library, exact schema DDL,
+  Cloudflare Tunnel's exact free-tier domain requirement) are still
+  open, listed in the document's own closing sections.
 - [`docs/architecture/plugin_architecture_proposal.md`](docs/architecture/plugin_architecture_proposal.md)
   (v1.5) — **draft architectural proposal, NOT approved for
   implementation as a whole** (the document's own header: *"No code
@@ -194,12 +231,19 @@ what gets built next:**
   independent agents) and a Decision Engine (Entitlement Classes, the
   Hidden Token Economy).
 - [`docs/architecture/ai_identity_technical_design.md`](docs/architecture/ai_identity_technical_design.md)
-  (v1.0) — **draft, NOT approved for implementation**, *except* for
-  Sections 3 and 10 specifically, which `user_onboarding_technical_design.md`
-  cites as approved, stable reference data (the 15-identity catalog
-  and the six communication-profile values) — the communication
-  pipeline itself (phrasing a `Decision` in an identity's voice) is
-  still fully unapproved.
+  (v1.0) — **draft, NOT approved for implementation as a whole**,
+  *except* for Sections 3 and 10 (the 15-identity catalog and the six
+  communication-profile values, cited by `user_onboarding_technical_design.md`
+  as approved, stable reference data), and *except* for a separate,
+  narrow, explicitly-approved slice — **Scarlett / Hybrid Personality
+  Presentation** (item 34 below) — that renders a selected identity's
+  `CommunicationProfile` as presentation-only tone/phrasing guidance
+  for ordinary free-form coaching dialogue. This is **not** the full
+  communication pipeline the document describes: `Decision` phrasing
+  from a Relationship/Decision Engine, Explanation Fidelity, and
+  Situational Constraint detection (Sections 5/6, and the document's
+  own Open Questions 1–3) remain fully unapproved and unbuilt — no
+  such engine exists yet to phrase anything from.
 - [`docs/architecture/advanced_mode_technical_design.md`](docs/architecture/advanced_mode_technical_design.md)
   (v1.0) — **draft, NOT approved for implementation as a whole**,
   *except* for Section 2 (`OperatingMode` itself) and Section 11 (the

@@ -169,13 +169,23 @@ class SituationalConstraints:
 @dataclass(frozen=True, kw_only=True)
 class ResponseContextSnapshot:
     """CE-7: assembled once per response, immutable, never persisted
-    by this engine. Five core fields (always present, not
+    by this engine. Six core fields (always present, not
     provider-sourced) plus context_fragments (Section 6/7 of the
-    design document -- everything domain- or memory-specific)."""
+    design document -- everything domain- or memory-specific).
+
+    `identity_id` (Scarlett/Hybrid Personality Presentation slice):
+    the raw catalog id (e.g. "scarlett") the caller already resolved
+    `identity_profile` from -- threaded through as plain data so
+    `prompt_builder.py` can label the tone-guidance block without
+    prompt_builder itself gaining a second, independent dependency on
+    `ai.identity_catalog` (the catalog is read exactly once, in
+    `identity_adapter.build_identity_profile()`/`context.py`, same as
+    before this slice)."""
     response_category: ResponseCategory
     current_user_message: str
     language: str
     identity_profile: CommunicationProfile
+    identity_id: str
     situational_constraints: SituationalConstraints
     context_fragments: Mapping[str, ConversationContextFragment]
 

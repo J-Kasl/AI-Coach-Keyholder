@@ -15,7 +15,7 @@ def _snapshot() -> ResponseContextSnapshot:
     return ResponseContextSnapshot(
         response_category=ResponseCategory.COACHING_DIALOGUE, current_user_message="hi", language="en",
         identity_profile=CommunicationProfile(warmth=0.5, humor=0.5, teasing=0.5, assertiveness=0.5, formality=0.5, verbosity=0.5),
-        situational_constraints=SituationalConstraints(), context_fragments={},
+        identity_id="alex", situational_constraints=SituationalConstraints(), context_fragments={},
     )
 
 

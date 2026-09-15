@@ -65,12 +65,26 @@ class CommandRouter:
         self._descriptions[key] = description
 
     def register_family(self, family: str, *, invalid_handler: Handler) -> None:
-        """A family token (e.g. "mode") whose own invalid/unrecognized
-        multi-word inputs (e.g. "mode nonsense") get a deterministic,
-        family-specific reply instead of falling through to Conversation
-        Engine's ordinary unmatched-text path. Deliberately NOT fuzzy
-        matching -- only the exact first whitespace-separated token is
-        checked against registered families."""
+        """A family token (e.g. "mode") whose own bare, standalone
+        invocation (e.g. "mode" alone, with nothing else) gets a
+        deterministic, family-specific reply instead of falling
+        through to Conversation Engine's ordinary unmatched-text path.
+
+        Command Family Fallback Precision: fires ONLY when the entire
+        trimmed/lowercased input equals the family word exactly --
+        never merely because the input STARTS WITH it. A multi-word
+        input starting with a family word (a near-miss command typo
+        like "task compelte", or ordinary conversation that happens to
+        start with a common English word like "task"/"lock"/"mode",
+        e.g. "task is really weighing on me today, can we talk?") is no
+        longer intercepted here -- if it is not an exact registered
+        command either, it now falls through as ordinary unmatched
+        text, reaching Conversation Engine exactly like any other
+        unmatched multi-word input already does. This does not change
+        exact-command matching at all -- "task request"/"lock status"/
+        etc. are still matched by `self._handlers` first, before this
+        method's own lookup ever runs. Deliberately NOT fuzzy matching
+        -- an exact string equality check, nothing approximate."""
         self._families[family.strip().lower()] = invalid_handler
 
     def route(self, text: str, context: RequestContext) -> RouteResult:
@@ -79,8 +93,7 @@ class CommandRouter:
         if handler is not None:
             return RouteResult(matched=True, outgoing=handler(context))
 
-        first_token = command.split(maxsplit=1)[0] if command else ""
-        family_handler = self._families.get(first_token)
+        family_handler = self._families.get(command)
         if family_handler is not None:
             return RouteResult(matched=True, outgoing=family_handler(context))
 

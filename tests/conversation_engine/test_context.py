@@ -65,7 +65,7 @@ class TestAssembleContextHappyPath:
         providers = [_OkProvider("a"), _OkProvider("b")]
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             providers=providers, required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert set(snapshot.context_fragments) == {"a", "b"}
@@ -74,7 +74,7 @@ class TestAssembleContextHappyPath:
     def test_empty_provider_list_produces_an_empty_but_valid_snapshot(self) -> None:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.ERROR_FALLBACK, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             providers=[], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert dict(snapshot.context_fragments) == {}
@@ -85,7 +85,7 @@ class TestOptionalProviderFailure:
     def test_none_returning_provider_does_not_block_assembly(self) -> None:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             providers=[_NoneProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert "empty" not in snapshot.context_fragments
@@ -96,7 +96,7 @@ class TestOptionalProviderFailure:
     def test_raising_provider_does_not_block_assembly(self) -> None:
         snapshot, outcomes = assemble_context(
             response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
-            language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+            language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
             providers=[_RaisingProvider(), _OkProvider("a")], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
         )
         assert "broken" not in snapshot.context_fragments
@@ -110,7 +110,7 @@ class TestRequiredProviderFailure:
         with pytest.raises(RequiredProviderFailedError, match="broken"):
             assemble_context(
                 response_category=ResponseCategory.GOVERNANCE_EXPLANATION, current_user_message="hi",
-                language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+                language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
                 providers=[_RaisingProvider()], required_provider_namespaces=frozenset({"broken"}), subject_key="user-1", now=FIXED_TIME,
             )
 
@@ -120,7 +120,7 @@ class TestRequiredProviderFailure:
         with pytest.raises(RequiredProviderFailedError):
             assemble_context(
                 response_category=ResponseCategory.GOVERNANCE_EXPLANATION, current_user_message="hi",
-                language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+                language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
                 providers=[], required_provider_namespaces=frozenset({"decision"}), subject_key="user-1", now=FIXED_TIME,
             )
 
@@ -130,7 +130,7 @@ class TestNamespaceContract:
         with pytest.raises(ProviderNamespaceMismatchError):
             assemble_context(
                 response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
-                language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+                language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
                 providers=[_MismatchedNamespaceProvider()], required_provider_namespaces=frozenset(), subject_key="user-1", now=FIXED_TIME,
             )
 
@@ -138,7 +138,7 @@ class TestNamespaceContract:
         with pytest.raises(ProviderNamespaceCollisionError):
             assemble_context(
                 response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi",
-                language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+                language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
                 providers=[_OkProvider("dup"), _OkProvider("dup")], required_provider_namespaces=frozenset(),
                 subject_key="user-1", now=FIXED_TIME,
             )

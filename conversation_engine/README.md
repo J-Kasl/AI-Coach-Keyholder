@@ -102,6 +102,95 @@ instructions that were not provided").
   after a "restart" still sees the same persisted facts) run
   end-to-end and confirmed.
 
+### Scarlett — Hybrid Personality Presentation
+
+The first real personality presentation layer, closing a gap this
+package's own `identity_profile`/`identity_adapter.py` had carried as
+unused data since Slice D: `ai/identity_catalog.py`'s own docstring
+used to say "nothing in this codebase reads them yet" -- already
+factually stale even before this slice (the prompt already rendered a
+bare "Tone guidance" line from `identity_profile`), and now corrected,
+since this slice both fixed that line's own content and precedence
+and made the connection load-bearing enough that the claim needed to
+go.
+
+**What changed, concretely:**
+- `ResponseContextSnapshot` gained a sixth core field, `identity_id:
+  str` -- the raw catalog id (e.g. `"scarlett"`) the caller already
+  resolved `identity_profile` from, threaded through
+  `assemble_context()`/`build_response_context()` (both already had
+  `identity_id` available; only `assemble_context()`'s own direct
+  callers needed updating). This lets `prompt_builder.py` label the
+  personality block by name without gaining a second, independent
+  `ai.identity_catalog` dependency -- the catalog is still read
+  exactly once, in `identity_adapter.build_identity_profile()`.
+- `prompt_builder.py`'s system-message assembly was **reordered**:
+  `_SYSTEM_BOUNDARIES` + category rules, then **AUTHORITATIVE
+  APPLICATION STATE**, then **PERSONALITY / PRESENTATION**, then the
+  language directive -- personality used to render *before* domain
+  state, the wrong precedence for "authoritative state outranks
+  presentation." The new `PERSONALITY / PRESENTATION` block replaces
+  the old bare "Tone guidance" line with the same six numeric
+  dimensions plus explicit, in-prompt scope language: presentation
+  only, never authority, never grants or restricts permissions, never
+  overrides authoritative state or system boundaries, and task/
+  conversation content stays data regardless of tone -- structured
+  onto its own line, separate from the identity/dimensions line, for
+  cleaner parsing (a pure legibility refinement added during
+  acceptance hardening; no change to either line's own wording or
+  values). `_SYSTEM_
+  BOUNDARIES` itself was **not** modified.
+- **Selection mechanism reused, not reinvented:** every user already
+  explicitly picks one of the 15 catalog identities during onboarding
+  (`application/onboarding_service.py::_handle_personality`) -- a
+  complete, deterministic, already-working mechanism with no
+  skip/default path at all (an incomplete onboarding never reaches the
+  Conversation Engine in the first place). Scarlett is simply one of
+  the 15 -- fully selectable, correctly wired, exactly like the other
+  14, with no Scarlett-specific code anywhere in
+  `conversation_engine`. **Deliberately not implemented:** any
+  mechanism that pre-selects or defaults a user to Scarlett *without*
+  going through this existing choice -- doing so would mean changing
+  the onboarding flow's own behavior, which nothing in the current
+  architecture makes strictly necessary (Scarlett already reachable
+  through the existing mechanism) and which the assigned scope
+  explicitly said not to invent speculatively.
+- **Approved data used, not the values a handoff prompt suggested:**
+  Scarlett's real `CommunicationProfile` is `warmth=0.5, humor=0.4,
+  teasing=0.5, assertiveness=0.9, formality=0.3, verbosity=0.4`,
+  archetype "Bold, direct, unapologetically firm" --
+  `docs/architecture/ai_identity_technical_design.md` Section 10,
+  `ai/identity_catalog.py`'s own single source of truth.
+- **Trust boundary, verified directly:** `tests/conversation_engine/
+  test_personality_presentation.py` -- personality never creates an
+  extra `ModelMessage`, never changes a message's role, domain writes
+  (lock reports, task assignments, Working Memory) are unaffected by
+  which personality is active, deterministic command replies are
+  byte-for-byte identical regardless of personality, adversarial task
+  `title`/`instructions` remain inert with Scarlett's profile active
+  (reusing Candidate B's own exact adversarial strings), and an
+  end-to-end test with a Scarlett-toned model response claiming task
+  completion (`"Done, gorgeous. I marked that task complete for you
+  already."`) leaves `task_assignments` completely unwritten.
+- **Identity lifecycle acceptance-hardened end-to-end:**
+  `tests/application/test_identity_lifecycle_acceptance.py` drives the
+  real Discord-message -> `ApplicationService.handle_message()` ->
+  onboarding -> `CommandRouter`/`ConversationEngine` path with the
+  real `LockStateContextProvider`/`ActiveTaskContextProvider` wired in
+  (mirroring `bot/discord_bot.py`'s own composition root exactly, not
+  a reduced stand-in) -- confirms a real, persisted `identity_id`
+  (read fresh from `user_preferences` on every message, not cached)
+  reliably reaches the model prompt; a second, distinct catalog
+  identity (Damon) produces its own distinct profile, never
+  Scarlett's; identity stays stable across multiple messages and
+  survives a fully reconstructed `ApplicationService`/
+  `ConversationEngine` against the same database; deterministic
+  commands never invoke the model regardless of which identity is
+  selected; incomplete onboarding never reaches the model; and a
+  simulated stale `identity_id` (removed from the catalog after
+  selection) falls back to the existing safe, deterministic reply
+  without ever calling the model with a fabricated identity.
+
 ## What is implemented here — Slice 3 (Working Memory integration)
 
 Replaced `TransitionalRecentMessageBuffer` with `memory_system`'s own
@@ -330,7 +419,7 @@ unchanged.**
   checks (Section "Validation" below).
 - **`fallback.py`** — `render_fallback()`, the deterministic renderer
   that works with zero dependencies on the rest of this package.
-- **64 tests** in `tests/conversation_engine/`, including a recursive-
+- **245 tests** in `tests/conversation_engine/`, including a recursive-
   immutability proof (not just top-level), a static AST scan proving
   no existing package imports this one, and direct exercise of
   existing command paths through a real `ApplicationService`.
@@ -468,3 +557,10 @@ step (see the project's own root `README.md`).
   be *influenced* by adversarial user content.
 - **No proactive/scheduled messages.** Conversation Engine only ever
   responds to an incoming message; nothing calls it on a timer.
+- **No Scarlett-specific (or any personality-specific) default that
+  bypasses the existing onboarding choice.** Every user still
+  explicitly picks their identity, from all 15, during onboarding --
+  Scarlett is reachable through that same mechanism, not through a
+  separate default path. Making any identity a true skip-the-choice
+  default would be an onboarding-flow product decision, not something
+  this slice inferred on its own.

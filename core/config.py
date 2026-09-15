@@ -74,6 +74,40 @@ class Config:
     chaster_api_token: str | None = None
     apple_health_api_key: str | None = None
 
+    # CHASTER-01A -- OAuth connection foundation. All optional: the
+    # bot must start normally, with the Chaster callback listener
+    # simply not started (CoachKeyholderBot.setup_hook() checks this),
+    # if any of these is unset -- see chaster/README.md.
+    #
+    # Non-secrets:
+    chaster_client_id: str | None = None
+    chaster_redirect_uri: str | None = None            # the full public callback URL
+    chaster_callback_bind_host: str = "127.0.0.1"      # localhost-only, never a public bind address
+    chaster_callback_bind_port: int = 8420
+    #
+    # Secrets -- never in source control, logs, Discord, Working
+    # Memory, or model prompts:
+    chaster_client_secret: str | None = None
+    chaster_token_encryption_key: str | None = None
+
+    # PC-local emergency-unlock safety plane (design/architecture doc
+    # Section 25c) -- intentionally a SEPARATE process from the
+    # Discord bot (chaster/emergency_unlock_server.py, not wired into
+    # CoachKeyholderBot at all), so it stays usable even if the bot
+    # process itself is hung/crashed/malfunctioning. All optional --
+    # the emergency server refuses to start at all if the secret is
+    # unset (fails loudly, never runs unauthenticated).
+    #
+    # Non-secret:
+    chaster_emergency_bind_host: str = "127.0.0.1"     # localhost-only, never a public bind address
+    chaster_emergency_bind_port: int = 8421            # distinct from the OAuth callback's own 8420
+    #
+    # Secret -- deliberately its OWN, separate value: never the same
+    # as chaster_client_secret or chaster_token_encryption_key, so
+    # compromising one secret does not also compromise the emergency
+    # path:
+    chaster_emergency_unlock_secret: str | None = None
+
     # General
     log_level: str = "INFO"
     quiet_hours_start: str = "22:00"   # for a future scheduler (Phase 5)
@@ -111,6 +145,15 @@ class Config:
             backup_retention_count=int(retention_str) if retention_str else 14,
             chaster_api_token=get("CHASTER_API_TOKEN"),
             apple_health_api_key=get("APPLE_HEALTH_API_KEY"),
+            chaster_client_id=get("CHASTER_CLIENT_ID"),
+            chaster_redirect_uri=get("CHASTER_REDIRECT_URI"),
+            chaster_callback_bind_host=get("CHASTER_CALLBACK_BIND_HOST", "127.0.0.1") or "127.0.0.1",
+            chaster_callback_bind_port=int(get("CHASTER_CALLBACK_BIND_PORT", "8420") or "8420"),
+            chaster_client_secret=get("CHASTER_CLIENT_SECRET"),
+            chaster_token_encryption_key=get("CHASTER_TOKEN_ENCRYPTION_KEY"),
+            chaster_emergency_bind_host=get("CHASTER_EMERGENCY_BIND_HOST", "127.0.0.1") or "127.0.0.1",
+            chaster_emergency_bind_port=int(get("CHASTER_EMERGENCY_BIND_PORT", "8421") or "8421"),
+            chaster_emergency_unlock_secret=get("CHASTER_EMERGENCY_UNLOCK_SECRET"),
             log_level=get("LOG_LEVEL", "INFO"),
             quiet_hours_start=get("QUIET_HOURS_START", "22:00"),
             quiet_hours_end=get("QUIET_HOURS_END", "07:00"),

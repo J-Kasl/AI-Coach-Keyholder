@@ -41,6 +41,8 @@ from conversation_engine.engine import ConversationEngine
 from conversation_engine.fallback import FallbackReason, render_fallback
 from conversation_engine.models import UnknownIdentityError
 from application.user_service import UserService
+from chaster.repository import ChasterConnectionRepository, ChasterOAuthStateRepository
+from chaster.oauth_client import ChasterOAuthClient
 from goal_management.repository import GoalManager
 from infrastructure.database import Database as CoreDatabase
 from lock_state.models import LockKnowledgeState, LockReportStatus
@@ -72,6 +74,8 @@ class ApplicationService:
         conversation_engine: ConversationEngine | None = None,
         lock_state: LockState | None = None, task_runtime: TaskRuntime | None = None,
         task_catalog: TaskCatalog | None = None,
+        chaster_connections: ChasterConnectionRepository | None = None,
+        chaster_oauth_client: ChasterOAuthClient | None = None,
     ) -> None:
         self.db_path = Path(db_path)
         self._core = core if core is not None else CoreDatabase(self.db_path)
@@ -99,6 +103,19 @@ class ApplicationService:
         self.task_catalog = task_catalog if task_catalog is not None else TaskCatalog(self.db_path, core=self._core)
         self.task_runtime = task_runtime if task_runtime is not None else TaskRuntime(self.db_path, core=self._core)
         self.task_runtime_admin = TaskRuntimeAdministration(self.db_path, core=self._core)
+
+        # CHASTER-01A: chaster_states always constructable (needs no
+        # config -- no encryption, no client secret); chaster_connections/
+        # chaster_oauth_client are genuinely optional -- DI only, never
+        # self-constructed here, since doing so would require a master
+        # encryption key / OAuth client credentials this layer has no
+        # business sourcing itself (bot/discord_bot.py's own composition
+        # root is where Config is read). If either is None, `chaster
+        # connect` replies that Chaster integration is not configured,
+        # rather than raising.
+        self.chaster_states = ChasterOAuthStateRepository(self.db_path, core=self._core)
+        self.chaster_connections = chaster_connections
+        self.chaster_oauth_client = chaster_oauth_client
 
         self.router = CommandRouter()
         self._register_commands()
@@ -208,6 +225,9 @@ class ApplicationService:
         self.router.register("task complete", "Mark your active task as completed", self._handle_task_complete)
         self.router.register("task cancel", "Cancel your active task", self._handle_task_cancel)
         self.router.register_family("task", invalid_handler=self._handle_task_invalid)
+
+        self.router.register("chaster connect", "Connect your Chaster account", self._handle_chaster_connect)
+        self.router.register_family("chaster", invalid_handler=self._handle_chaster_invalid)
 
     def _handle_help(self, ctx: RequestContext) -> OutgoingMessage:
         return OutgoingMessage(text=self.router.help_text())
@@ -507,11 +527,61 @@ class ApplicationService:
                  "`task complete`, or `task cancel`."
         )
 
+    def _handle_chaster_connect(self, ctx: RequestContext) -> OutgoingMessage:
+        if self.chaster_oauth_client is None or self.chaster_connections is None:
+            return OutgoingMessage(text="Chaster integration is not configured on this bot.")
+
+        existing = self.chaster_connections.get(ctx.user.id)
+        if existing is not None:
+            return OutgoingMessage(
+                text=f"You already have a Chaster connection (status: {existing.connection_status.value}). "
+                     f"Reconnecting is not yet supported in this slice."
+            )
+
+        # Replaces (never accumulates) any earlier still-pending state
+        # for this user -- the chaster_oauth_states table's own
+        # UNIQUE(user_id) constraint enforces this at the database
+        # level. An older, still-open authorization link becomes
+        # immediately dead the moment this runs again.
+        state = self.chaster_states.create_or_replace(user_id=ctx.user.id, now=ctx.now)
+        url = self.chaster_oauth_client.build_authorization_url(state=state)
+        return OutgoingMessage(
+            text=f"Connect your Chaster account: {url}\n\n"
+                 f"This link is single-use and expires in 10 minutes. If you run `chaster connect` "
+                 f"again before finishing, this link will stop working."
+        )
+
+    def _handle_chaster_invalid(self, ctx: RequestContext) -> OutgoingMessage:
+        return OutgoingMessage(text="That's not a recognized `chaster` command. Try `chaster connect`.")
+
+    def _present_title(self, title: str | None) -> str:
+        """
+        Deterministic Task Command Human-Readable Content: the exact
+        same "never fabricate, render an explicit marker" convention
+        Candidate B already established at the conversational
+        prompt-rendering layer (conversation_engine/prompt_builder.py's
+        own `_NOT_RECORDED`) -- reused here, not reinvented, so a
+        legacy row with no recorded title reads identically whether
+        the user sees it through free conversation or through a
+        deterministic command reply.
+        """
+        return title if title is not None else "(not recorded)"
+
     def _handle_task_active(self, ctx: RequestContext) -> OutgoingMessage:
         assignment = self.task_runtime.get_active_assignment(ctx.user.id)
         if assignment is None:
             return OutgoingMessage(text="No active task. Send `task request` to get one.")
-        return OutgoingMessage(text=f"Active: {assignment.template_id} (assigned {assignment.assigned_at.isoformat()}).")
+        # Resolves the assignment's own exact pinned (template_id, template_version) --
+        # never current_version -- same invariant ActiveTaskContextProvider already
+        # enforces for the conversational path (task_catalog's own composite FK
+        # guarantees this row exists; a None here would be a genuine, unexpected
+        # inconsistency, not a normal state -- handled the same way a missing
+        # title is: an explicit "(not recorded)" marker, never a crash).
+        template = self.task_catalog.get_template(assignment.template_id, assignment.template_version)
+        title = self._present_title(template.title if template is not None else None)
+        return OutgoingMessage(
+            text=f"Active: {title} ({assignment.template_id}, assigned {assignment.assigned_at.isoformat()})."
+        )
 
     def _handle_task_request(self, ctx: RequestContext) -> OutgoingMessage:
         consent_id = self._consent_id_for(ctx)
@@ -520,8 +590,10 @@ class ApplicationService:
 
         existing = self.task_runtime.get_active_assignment(ctx.user.id)
         if existing is not None:
+            existing_template = self.task_catalog.get_template(existing.template_id, existing.template_version)
+            existing_title = self._present_title(existing_template.title if existing_template is not None else None)
             return OutgoingMessage(
-                text=f"You already have an active task: {existing.template_id}. "
+                text=f"You already have an active task: {existing_title}. "
                      f"Send `task complete` or `task cancel` first."
             )
 
@@ -548,15 +620,17 @@ class ApplicationService:
         except TaskTemplateNotFoundForAssignmentError:
             return OutgoingMessage(text="That task is no longer available. Try `task request` again.")
 
-        return OutgoingMessage(text=f"Assigned: {assignment.template_id}.")
+        # `chosen` is the exact TaskTemplateVersion already selected for this
+        # assignment -- reused directly, never a second lookup.
+        return OutgoingMessage(text=f"Assigned: {self._present_title(chosen.title)}.")
 
     def _handle_task_complete(self, ctx: RequestContext) -> OutgoingMessage:
-        return self._resolve_task(ctx, resolve=self.task_runtime_admin.complete_task, resolved_text="Completed.")
+        return self._resolve_task(ctx, resolve=self.task_runtime_admin.complete_task, resolved_prefix="Completed")
 
     def _handle_task_cancel(self, ctx: RequestContext) -> OutgoingMessage:
-        return self._resolve_task(ctx, resolve=self.task_runtime_admin.cancel_task, resolved_text="Cancelled.")
+        return self._resolve_task(ctx, resolve=self.task_runtime_admin.cancel_task, resolved_prefix="Cancelled")
 
-    def _resolve_task(self, ctx: RequestContext, *, resolve, resolved_text: str) -> OutgoingMessage:
+    def _resolve_task(self, ctx: RequestContext, *, resolve, resolved_prefix: str) -> OutgoingMessage:
         consent_id = self._consent_id_for(ctx)
         if consent_id is None:
             return OutgoingMessage(text="Couldn't process that -- no stable message reference was available.")
@@ -572,4 +646,13 @@ class ApplicationService:
         except TaskAssignmentNotFoundError:
             return OutgoingMessage(text="Something went wrong resolving that task. It's been logged.")
 
-        return OutgoingMessage(text=resolved_text)
+        # Title-aware task complete/cancel confirmation: resolves the
+        # assignment's own exact pinned (template_id, template_version) --
+        # never current_version -- the same invariant `_handle_task_active`/
+        # `_handle_task_request` already enforce. `assignment` was read
+        # BEFORE resolve() transitioned it, so its own pinned version is
+        # unaffected either way; the catalog lookup is independent of the
+        # assignment's own status.
+        template = self.task_catalog.get_template(assignment.template_id, assignment.template_version)
+        title = self._present_title(template.title if template is not None else None)
+        return OutgoingMessage(text=f"{resolved_prefix}: {title}.")

@@ -28,7 +28,7 @@ def _profile(**overrides) -> CommunicationProfile:
 def _snapshot(**overrides) -> ResponseContextSnapshot:
     kwargs = dict(
         response_category=ResponseCategory.INFORMATIONAL_STATUS, current_user_message="hi", language="en",
-        identity_profile=_profile(), situational_constraints=SituationalConstraints(), context_fragments={},
+        identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(), context_fragments={},
     )
     kwargs.update(overrides)
     return ResponseContextSnapshot(**kwargs)

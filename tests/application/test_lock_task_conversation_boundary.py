@@ -121,13 +121,26 @@ class TestKnownCommandsNeverReachTheModel:
         service.handle_message(_incoming("task complete", external_message_id="m2"))
         assert model.calls == []
 
-    def test_invalid_lock_family_command_never_calls_the_model(self, service: ApplicationService, model: _RecordingModel) -> None:
-        """CE-25's own guarantee, extended to the new command families --
-        even an INVALID 'lock ...'/'task ...' input is caught by the
-        family invalid_handler, never falling through to Conversation Engine."""
+    def test_bare_invalid_lock_family_word_never_calls_the_model(self, service: ApplicationService, model: _RecordingModel) -> None:
+        """CE-25's own guarantee: the bare family word alone is still
+        caught by the family invalid_handler, never falling through to
+        Conversation Engine."""
+        _complete_onboarding(service)
+        service.handle_message(_incoming("lock", external_message_id="m1"))
+        assert model.calls == []
+
+    def test_near_miss_lock_family_text_now_reaches_the_model(self, service: ApplicationService, model: _RecordingModel) -> None:
+        """Command Family Fallback Precision (Option A): a multi-word
+        input starting with "lock" that is not an exact registered
+        command (e.g. a typo, or ordinary conversation) is no longer
+        intercepted by the family fallback -- it now reaches
+        Conversation Engine exactly like any other unmatched
+        multi-word input. This is the deliberate, approved trade-off
+        of this slice, not a regression of CE-25's own guarantee
+        (which only ever covered KNOWN, registered commands)."""
         _complete_onboarding(service)
         service.handle_message(_incoming("lock frobnicate", external_message_id="m1"))
-        assert model.calls == []
+        assert len(model.calls) == 1
 
 
 class TestOrdinaryConversationalTextNeverWritesDomainState:

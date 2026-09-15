@@ -41,7 +41,7 @@ def _snapshot_with_task(completion_requirements: dict) -> ResponseContextSnapsho
     )
     return ResponseContextSnapshot(
         response_category=ResponseCategory.COACHING_DIALOGUE, current_user_message=FIXED_MESSAGE,
-        language="en", identity_profile=_profile(), situational_constraints=SituationalConstraints(),
+        language="en", identity_profile=_profile(), identity_id="alex", situational_constraints=SituationalConstraints(),
         context_fragments={"active_task": fragment},
     )
 

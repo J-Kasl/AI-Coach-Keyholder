@@ -65,7 +65,7 @@ class ProviderCallOutcome:
 
 def assemble_context(
     *, response_category: ResponseCategory, current_user_message: str, language: str,
-    identity_profile: CommunicationProfile, situational_constraints: SituationalConstraints,
+    identity_profile: CommunicationProfile, identity_id: str, situational_constraints: SituationalConstraints,
     providers: Sequence[ConversationContextProvider], required_provider_namespaces: frozenset[str],
     subject_key: str, now: datetime,
 ) -> tuple[ResponseContextSnapshot, tuple[ProviderCallOutcome, ...]]:
@@ -134,7 +134,7 @@ def assemble_context(
 
     snapshot = ResponseContextSnapshot(
         response_category=response_category, current_user_message=current_user_message,
-        language=language, identity_profile=identity_profile,
+        language=language, identity_profile=identity_profile, identity_id=identity_id,
         situational_constraints=situational_constraints, context_fragments=fragments,
     )
     return snapshot, tuple(outcomes)
@@ -182,7 +182,7 @@ def build_response_context(
     try:
         snapshot, outcomes = assemble_context(
             response_category=response_category, current_user_message=current_user_message,
-            language=language, identity_profile=identity_profile,
+            language=language, identity_profile=identity_profile, identity_id=identity_id,
             situational_constraints=situational_constraints, providers=providers,
             required_provider_namespaces=required_provider_namespaces, subject_key=subject_key, now=now,
         )
