@@ -45,6 +45,9 @@ from enum import StrEnum
 
 import requests
 
+from chaster import CHASTER_USER_AGENT
+from chaster._http import send_with_ordered_headers
+
 __all__ = [
     "ChasterLockClient",
     "ChasterLockApiError",
@@ -91,9 +94,9 @@ class ChasterLockClient:
         if not access_token or not access_token.strip():
             raise ValueError("access_token must be a non-empty string.")
         try:
-            response = requests.get(
-                LOCKS_URL, params={"status": "active"},
-                headers={"Authorization": f"Bearer {access_token}"},
+            response = send_with_ordered_headers(
+                "GET", LOCKS_URL, params={"status": "active"},
+                headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT},
                 timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
             )
         except requests.RequestException as exc:
@@ -124,9 +127,9 @@ class ChasterLockClient:
         if not lock_id or not lock_id.strip():
             raise ValueError("lock_id must be a non-empty string.")
         try:
-            response = requests.post(
-                f"{LOCKS_URL}/{lock_id}/emergency-unlock",
-                headers={"Authorization": f"Bearer {access_token}"},
+            response = send_with_ordered_headers(
+                "POST", f"{LOCKS_URL}/{lock_id}/emergency-unlock",
+                headers={"Authorization": f"Bearer {access_token}", "User-Agent": CHASTER_USER_AGENT},
                 timeout=(DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS),
             )
         except requests.RequestException as exc:

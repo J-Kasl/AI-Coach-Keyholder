@@ -1,4 +1,4 @@
-# Chaster Integration — Technical Design (v0.15)
+# Chaster Integration — Technical Design (v0.17)
 
 > **Status: Draft for review. HTTP callback architecture (Option C)
 > is approved at the architecture level as of v0.4. The
@@ -136,6 +136,41 @@
 > explicitly that it applies only to the separate goal of a real
 > per-Discord-user connection, not to schema discovery. No code
 > changed; no schema guessed; no real request made.
+>
+> **v0.16 change note (first real test — HTTP 400 diagnosis)**: new
+> Section 25e records the actual result of the first real,
+> developer-token test: both `GET /auth/profile` and
+> `GET /locks?status=active` returned HTTP 400. Confirmed a genuine
+> difference from Chaster's own official example request
+> (`docs.chaster.app/api/public-api/endpoints/`), which includes a
+> `Content-type: application/json` header our production clients
+> never send — flagged explicitly as INFERENCE, not a confirmed root
+> cause. `scripts/dev_chaster_schema_probe.py` gained a read-only
+> diagnostic fallback (`_print_diagnostic_response()`) that captures
+> and safely prints the real, redacted response body/headers/status
+> when a primary call fails, and tests both the current header set
+> and the official-example header set, so the next real run settles
+> this empirically. No production client (`chaster/oauth_client.py`,
+> `chaster/lock_client.py`) was modified. 11 new tests (33
+> cumulative in `tests/scripts/`).
+>
+> **v0.17 change note (curl vs. Python request comparison)**: a real
+> `curl.exe` request to `/locks?status=active` with the real developer
+> token succeeded (HTTP 200), conclusively ruling out an invalid
+> token, wrong endpoint/parameter, or general API unavailability —
+> our Python client, same URL, same token, still returned 400. Direct
+> inspection of the real `requests.PreparedRequest` (no network call)
+> confirmed Python sends `User-Agent: python-requests/<version>`,
+> `Accept-Encoding: gzip, deflate`, and `Connection: keep-alive` that
+> curl's own shown request doesn't — flagged as INFERENCE (a real,
+> confirmed difference, not yet a confirmed cause).
+> `dev_chaster_schema_probe.py` gained a `curl_equivalent` header-style
+> mode, verified against a real (unmocked) `PreparedRequest` to
+> reproduce curl's exact header set, scoped to `/locks` only per
+> instruction. **No production client was modified** — a fix to
+> `chaster/lock_client.py` will only be made once this is confirmed by
+> a real result. 26 tests in `tests/scripts/test_dev_chaster_schema_probe.py`
+> (up from 21 — 2 obsolete tests removed, 7 added).
 >
 > **Dependency change policy**: `cryptography` is recommended as a
 > future runtime dependency of `requirements.txt` — it has **not**
@@ -2126,6 +2161,138 @@ registered exactly in the Chaster developer interface. None of this
 is implemented in this repository; all of it is external
 configuration, by design (Section 8's own repository/Cloudflare
 boundary).
+
+## 25e. First real developer-token test — result and diagnosis in progress
+
+**Actual result of the first real, read-only test against Chaster's
+Public API** (developer token, entered only via local `getpass`,
+never seen by this project's own tooling):
+
+- `GET /auth/profile` → **HTTP 400**
+- `GET /locks?status=active` → **HTTP 400**
+- No write/unlock endpoint was called (confirmed structurally — the
+  diagnostic script contains zero `requests.post/put/patch/delete`
+  calls anywhere).
+
+### CONFIRMED
+
+- Both requests target the exact, officially-confirmed endpoints and
+  HTTP methods (Section 11, Section 25c's own "Option A
+  implementation" subsection) — no wrong URL/path/method.
+- The token is sent as `Authorization: Bearer <token>` — matching
+  Chaster's own official example on `docs.chaster.app/api/public-api/endpoints/`
+  exactly for the *auth scheme* itself.
+- **Chaster's own official example request on that same page includes
+  a `Content-type: application/json` header on its GET example** —
+  our current production clients (`chaster/oauth_client.py::fetch_raw_profile()`,
+  `chaster/lock_client.py::list_active_locks()`) send **only** the
+  `Authorization` header, no `Content-type` at all.
+- HTTP 400 (Bad Request) is, by standard HTTP semantics, conventionally
+  associated with a malformed/invalid *request* — as distinct from 401
+  (unauthenticated) or 403 (forbidden), which are the more typical
+  codes for an authentication/authorization problem specifically. Both
+  endpoints failing identically with the same code is consistent with
+  something common to both requests (the request construction itself,
+  not an endpoint-specific parameter) being the issue.
+
+### INFERENCE (not confirmed — the actual redacted response body, now
+capturable via the diagnostic fallback below, is what would confirm
+or refute this)
+
+- The missing `Content-type: application/json` header — present in
+  Chaster's own official example but absent from our current
+  requests — is the most parsimonious candidate explanation, given
+  it's a genuine difference from the documented example and would
+  plausibly affect both endpoints identically. **This is a hypothesis
+  to be tested empirically, not a confirmed root cause.**
+- A malformed Authorization header value (e.g. stray whitespace/
+  control characters from copy-paste) is a real, distinct possibility
+  that would also affect both endpoints identically and would also
+  plausibly produce a 400 rather than a 401 — cannot be distinguished
+  from the header-based hypothesis without seeing the actual response
+  body.
+
+### UNKNOWN
+
+- Whether Chaster's backend actually requires `Content-type` on a GET
+  request, or whether its example simply always includes that header
+  as a matter of style regardless of necessity.
+- Whether a developer token has any usage nuance distinct from an
+  OAuth access token beyond how it's obtained (nothing in the official
+  docs already reviewed suggests a difference beyond issuance) — not
+  contradicted by anything found, but not separately confirmed either.
+- The exact Chaster-provided error message/body content — not yet
+  seen, since the production clients discard it by design.
+
+### Diagnostic fix made this turn (scoped entirely to the diagnostic script)
+
+`scripts/dev_chaster_schema_probe.py` gained a read-only diagnostic
+fallback, `_print_diagnostic_response()`, invoked only when a primary
+(production-helper) call already failed: it makes one additional GET
+to the same confirmed endpoint and prints the real, redacted status
+code, headers, and JSON body — something the production clients
+deliberately never expose (they intentionally discard the body by
+design, Section 25c). It also tries **both** header variants — current
+production headers, and current headers plus `Content-type:
+application/json` — so the next real run settles the INFERENCE above
+empirically rather than by further guessing. **No production client
+in `chaster/oauth_client.py`/`chaster/lock_client.py` was modified** —
+per instruction, if the real diagnosis shows the `Content-type` header
+(or anything else) is genuinely required, that would be a separate,
+explicitly-approved follow-up change to the production clients, not
+made here.
+
+### Update — real curl.exe request succeeded; User-Agent identified as the leading, still-unconfirmed candidate
+
+**A real Windows `curl.exe` request to the identical endpoint
+succeeded (HTTP 200) with a real developer token that our Python
+`requests`-based client, calling the same URL with the same token,
+still returns HTTP 400 for.** This conclusively rules out (per the
+Chaster developer's own direct confirmation) an invalid token,
+missing API access, wrong endpoint, wrong query parameter, or general
+API unavailability. HTTP/2 vs HTTP/1.1 was separately ruled out by
+the same developer (their curl works on both). The `Content-type`
+hypothesis (previous subsection) is also independently ruled out —
+already empirically disproven by your own prior test.
+
+**CONFIRMED, via direct inspection of the real `requests.PreparedRequest`**
+(`session.prepare_request()`, no network call made) — our Python
+client sends several headers curl's own shown request does not:
+
+| Header | curl (known working) | Python `requests` (default) |
+|---|---|---|
+| `User-Agent` | `curl/8.14.1` | `python-requests/<version>` |
+| `Accept` | `*/*` | `*/*` (same) |
+| `Accept-Encoding` | *(not shown/sent)* | `gzip, deflate` |
+| `Connection` | *(not shown)* | `keep-alive` |
+| `Authorization` | `Bearer <REDACTED>` | `Bearer <REDACTED>` (same) |
+
+**INFERENCE, not yet confirmed as the root cause**: `User-Agent:
+python-requests/<version>` is a very commonly targeted signature for
+WAF/bot-mitigation rules specifically because it unambiguously
+identifies the most common Python HTTP library's own unmodified
+default, whereas `curl/<version>` is typically treated as a
+legitimate developer tool. This is consistent with, and reinforces,
+this section's own earlier structural finding (empty-body/no-
+Content-Type 400s not matching how this API documents its own
+application-level 400 errors anywhere else in its OpenAPI spec) —
+both point toward an edge/infrastructure-level block rather than an
+application-level validation failure. **Not yet proven**: no real
+request with a modified User-Agent has yet been made.
+
+`scripts/dev_chaster_schema_probe.py` gained a `curl_equivalent`
+header-style mode, scoped to `/locks?status=active` only (per
+instruction — `/auth/profile` is deliberately not touched by this
+specific diagnostic pass, pending the `/locks` result first): it
+reproduces curl's exact header set (`requests` fully removes a
+default header when its value is explicitly set to `None` — verified
+directly against a real, unmocked `PreparedRequest`) alongside the
+current default-header variant, so the next real run settles the
+User-Agent hypothesis empirically. **No production client was
+modified** — `chaster/lock_client.py` still sends exactly what it
+sent before; a fix will only be made once this hypothesis is actually
+confirmed by a real result showing the curl-equivalent variant
+succeeding where the default variant still fails.
 
 ## 26. CHASTER-01A boundary and open decisions
 
