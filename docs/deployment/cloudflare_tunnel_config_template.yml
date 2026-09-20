@@ -1,0 +1,65 @@
+# docs/deployment/cloudflare_tunnel_config_template.yml
+#
+# TEMPLATE ONLY -- not runnable as-is, and not something Claude (or
+# any code in this repository) can generate real values for. Every
+# <PLACEHOLDER> below requires something only you can obtain: a real
+# Cloudflare account, a real named tunnel, a real domain/subdomain,
+# and a real, approved Chaster developer application. See
+# chaster/README.md's own "Testability" section (Milestone C) and
+# docs/architecture/chaster_integration_technical_design.md's
+# "Cloudflare prerequisites" note for the full context -- this file
+# exists so the config's SHAPE is correct once you have those real
+# values, not to supply them for you.
+#
+# CRITICAL, NON-NEGOTIABLE CONSTRAINT (already established, unchanged
+# by this file): the emergency-unlock listener's own port
+# (CHASTER_EMERGENCY_BIND_PORT, default 8421) must NEVER appear in
+# this file's ingress rules, under any hostname, ever. Only the OAuth
+# callback listener's port (CHASTER_CALLBACK_BIND_PORT, default 8420)
+# is ever exposed through the tunnel. This file intentionally routes
+# only one hostname, to one port, so there is no ingress rule to
+# accidentally misconfigure toward 8421.
+
+tunnel: <YOUR-TUNNEL-ID>          # from `cloudflared tunnel create <name>`
+credentials-file: <PATH-TO-YOUR-TUNNEL-CREDENTIALS-JSON>
+
+ingress:
+  # The only rule that matters: your chosen public hostname (the one
+  # you will register, verbatim, as CHASTER_REDIRECT_URI's own host)
+  # forwards to the LOCAL OAuth callback listener only.
+  - hostname: <your-chosen-subdomain>.<your-domain>
+    service: http://127.0.0.1:8420   # must match CHASTER_CALLBACK_BIND_PORT exactly
+
+  # Required catch-all -- cloudflared refuses to start without one.
+  # Deliberately a 404, not a proxy to anything -- this tunnel exists
+  # for exactly one hostname/service pair, nothing else.
+  - service: http_status:404
+
+# --------------------------------------------------------------------
+# After filling in the values above:
+#
+# 1. `cloudflared tunnel route dns <YOUR-TUNNEL-ID> <your-chosen-subdomain>.<your-domain>`
+#    -- creates the CNAME record pointing your hostname at the tunnel.
+#
+# 2. Set, in your own .env (never in this file, never committed):
+#      CHASTER_REDIRECT_URI=https://<your-chosen-subdomain>.<your-domain>/oauth/chaster/callback
+#
+#    The path is exactly `/oauth/chaster/callback` -- this is
+#    chaster/callback_listener.py's own CALLBACK_PATH constant, fixed
+#    in this codebase; the tunnel's ingress rule above only needs the
+#    hostname/port, since the path is handled by the local listener
+#    itself once traffic reaches it.
+#
+# 3. Register that exact CHASTER_REDIRECT_URI value in the Chaster
+#    developer interface for your application -- it must match
+#    character-for-character, including the scheme and path.
+#
+# 4. `cloudflared tunnel run <YOUR-TUNNEL-ID>` (or install it as a
+#    system service) -- separately from, and in addition to, running
+#    this bot itself. The tunnel and the bot are two independent
+#    processes; starting one does not start the other.
+#
+# 5. Only then does a real `chaster connect` produce a link that
+#    resolves through Cloudflare, back to this machine's own local
+#    listener on port 8420.
+# --------------------------------------------------------------------

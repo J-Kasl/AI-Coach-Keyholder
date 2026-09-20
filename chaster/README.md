@@ -239,7 +239,22 @@ piece is missing:
   flow. Every real request made against the live Chaster API so far
   (transport diagnostics, schema confirmation, this service's own
   manual smoke tests) has used a developer token entered by hand,
-  never the production OAuth path.
+  never the production OAuth path. **All application-level code this
+  milestone needs already exists and is already tested** — the
+  `chaster connect` Discord command (`application/service.py::_handle_chaster_connect`),
+  the callback receiver (`chaster/callback_listener.py` +
+  `chaster/callback_service.py`, including real identity resolution
+  and encrypted persistence) — none of it needed new code. What
+  remains is entirely external: `docs/deployment/cloudflare_tunnel_config_template.yml`
+  documents the exact `cloudflared` ingress configuration needed
+  (one hostname → port 8420 only; port 8421, the emergency listener,
+  must never appear in any tunnel ingress rule), and
+  `scripts/dev_callback_listener_readiness_check.py` verifies the
+  local listener itself is ready to receive tunnel-forwarded traffic
+  — but neither substitutes for actually running `cloudflared`,
+  registering the resulting public URL with a real, approved Chaster
+  developer application, and completing one real `chaster connect`
+  by hand.
 
 ## Current real-provider readiness (checkpoint status)
 
