@@ -3,22 +3,31 @@
 Canonical design: `docs/architecture/chaster_integration_technical_design.md`
 (**`Draft for review`** — HTTP callback architecture and the
 encryption/key-management architecture are approved at the
-architecture level; this README describes exactly which slice,
-**CHASTER-01A: OAuth Connection Foundation**, has actually been
-implemented here).
+architecture level; this README describes exactly what has actually
+been implemented: **CHASTER-01A** (OAuth Connection Foundation, plus
+the real emergency-unlock safety plane) and **CHASTER-01B, Increments
+1–3** (the provider observation log and its on-demand fetch service).
+**CHASTER-01B Increment 4** (a conversation-engine context provider
+reading these observations) is explicitly **not** built — see
+"What is NOT implemented" below.
 
 ## Epistemic invariant — read this first
 
-> **Chaster-reported state, once CHASTER-01B exists, will be
-> `PROVIDER_REPORTED` state — never `VERIFIED`.**
+> **Chaster-reported state is `PROVIDER_REPORTED`/`ChasterProviderStatus`
+> state — never `VERIFIED`, and never merged with `lock_state`'s own
+> user-reported state.**
 
 Chaster's API can confirm what its own system was told, never whether
-a lock is *physically* secured. This slice (CHASTER-01A) doesn't even
-reach that point yet — it only establishes a per-user OAuth
-connection. No lock status is fetched, stored, or exposed anywhere in
-this module.
+a lock is *physically* secured. `ChasterProviderStatus` (`locked` /
+`unlocked` / `deserted`) exists specifically so this distinction is
+visible at the type level, not just in prose — no `VERIFIED` member
+exists, or ever will. Provider observations and `lock_state`'s own
+`lock_reports` are stored in structurally separate tables, with no
+foreign key between them, and are never reconciled into one combined
+value — see `docs/architecture/chaster_integration_technical_design.md`
+Section 15 ("Conflict with user-reported state").
 
-## What is implemented here — CHASTER-01A (OAuth Connection Foundation)
+## What is implemented — CHASTER-01A (OAuth Connection Foundation)
 
 - **`models.py`** — `ChasterOAuthState`, `ChasterConnection`,
   `ConnectionStatus` (exactly two values: `active` /
@@ -38,57 +47,124 @@ this module.
   `BEGIN IMMEDIATE`, proven with real concurrent threads in this
   module's own tests) and `ChasterConnectionRepository` (owns the
   encryption boundary — callers only ever see plaintext at this
-  layer's own edges, never ciphertext).
+  layer's own edges, never ciphertext). Token refresh is NOT
+  automatic here — `get_decrypted_access_token()` never checks
+  expiry itself; `chaster/provider_observation_service.py` (below) is
+  the one caller that performs the check-then-refresh-then-persist
+  orchestration.
+- **`_http.py`** — `send_with_ordered_headers()`, the single shared
+  transport every real Chaster HTTP call in this project goes
+  through. Exists because Chaster's own API/Cloudflare edge rejects
+  `requests`' default header ordering (`Authorization` appended
+  last) — confirmed by direct, reproducible, real testing against the
+  live endpoint. Reorders `Authorization`/`User-Agent` to the front,
+  preserves every other header `requests` itself needs (e.g.
+  `Content-Type` for a form body) unchanged.
 - **`oauth_client.py`** — `ChasterOAuthClient`, built only from the
-  two officially confirmed endpoints (Authorization, Token). Never
-  logs or echoes a code/token/secret in any exception message.
+  two officially confirmed endpoints (Authorization, Token) plus the
+  confirmed `GET /auth/profile` (`fetch_raw_profile()` — used by both
+  the real identity resolver below and a manual diagnostic script;
+  see its own docstring). Never logs or echoes a code/token/secret in
+  any exception message.
 - **`callback_service.py`** — `ChasterCallbackService`, the
   framework-agnostic orchestration: consume state → exchange code →
-  resolve identity → persist. **Known, honestly-flagged limitation**:
-  identity resolution (confirming *which* Chaster account authorized
-  a connection) requires an authenticated call this project's
-  research never confirmed the existence/shape of. Rather than guess
-  an endpoint, this is an injected dependency
-  (`resolve_identity`) — tests supply a fake; production wiring uses
-  `unconfirmed_identity_resolver`, which always raises
-  `ChasterIdentityResolutionUnavailable`. **A real callback against
-  the real Chaster API will fail safely at exactly this one step
-  until a future slice resolves it.** Everything before this point
-  (state consumption, code exchange) is fully real.
+  resolve identity → persist. **Identity resolution is now real**:
+  `build_real_identity_resolver()`, evidence-backed by a real,
+  complete, verbatim `GET /auth/profile` response (see the design
+  doc's own full diagnostic history), reads exactly the two fields
+  `ChasterIdentity` needs (`_id`, `username`) out of the ~90-field
+  real response — nothing else. Fails closed on a missing/wrong-type
+  `_id`. `unconfirmed_identity_resolver` (the old, always-raising
+  placeholder) remains in the module as a test fixture only — the
+  same pattern `UnwiredEmergencyUnlockProvider` already established.
 - **`callback_listener.py`** — `ChasterCallbackListener`, the ONLY
   `aiohttp.web` server in this project. One route
   (`/oauth/chaster/callback`), localhost-only bind. Started/stopped
   by `bot/discord_bot.py::CoachKeyholderBot.setup_hook()`/`close()` —
   a startup failure here is caught and logged, never allowed to
-  prevent Discord itself from starting (`setup_hook()` runs *before*
-  the websocket connects, so an uncaught exception there would take
-  down the whole bot — verified directly in this project's own tests
-  by simulating a bind failure).
+  prevent Discord itself from starting.
 
-## What is NOT implemented (explicitly out of scope for CHASTER-01A)
+## What is implemented — CHASTER-01B, Increments 1–3
 
-- Fetching or storing any Chaster lock status (`chaster_provider_observations`
-  does not exist — CHASTER-01B).
+- **Migration `023`** — `chaster_provider_observations`
+  (`id`, `connection_id` REFERENCES `chaster_connections(user_id)`,
+  `provider`, `chaster_lock_id` nullable, `status`, `fetched_at`,
+  `created_at`), plus `idx_chaster_provider_observations_connection_fetched`
+  on `(connection_id, fetched_at DESC)` for the one read pattern that
+  matters ("the most recent observation for this connection").
+  Append-only, structurally separate from `lock_reports` (migration
+  019) — no foreign key between them, confirmed directly via
+  `PRAGMA foreign_key_list`, not just by design intent.
+- **`models.py`** — `ChasterProviderStatus` (exactly `locked` /
+  `unlocked` / `deserted`, matching the confirmed official
+  `LockStatusEnum` — see the epistemic invariant above) and
+  `ChasterProviderObservation`.
+- **`provider_observation_repository.py`** — `ChasterProviderObservations`
+  (read-only, `get_latest()`) and `ChasterProviderObservationRecorder`
+  (append-only write — always an INSERT, never an UPDATE/DELETE).
+  Real concurrent-write safety proven with real threads, the same
+  discipline `chaster_oauth_states`' own tests already established.
+- **`provider_observation_service.py`** — `ChasterProviderObservationService.fetch_and_record()`,
+  the on-demand fetch workflow (connection lookup → token-expiry
+  check → transparent refresh + persist if needed →
+  `ChasterLockClient.list_active_locks()` → parse → record). **No
+  scheduler, no background thread, no asyncio task, no timer** — a
+  single synchronous call, triggered by a future caller (a Discord
+  command, not built in this increment). Returns
+  `FetchObservationResult` (an outcome + the best available
+  observation), not a bare `Observation | None` — Section 14's
+  failure taxonomy needs to stay distinguishable at the type level:
+  - `RECORDED` / `ZERO_ACTIVE_LOCKS` — a fresh observation.
+    Zero active locks is recorded as `unlocked` — a real, positive
+    report *from* the provider, structurally different from
+    inferring "unlocked" from missing/failed data.
+  - `NO_CONNECTION`, `NEEDS_REAUTHORIZATION`, `API_UNAVAILABLE` — the
+    live fetch could not happen or the token could not be refreshed;
+    `observation` carries the **last known** observation (its own
+    real `fetched_at`, never rewritten to look fresh) if one exists,
+    `None` otherwise. None of these ever imply `unlocked`.
+  - `AMBIGUOUS_MULTIPLE_LOCKS` — more than one active lock; the
+    model holds exactly one lock's status per row, so this fails
+    closed rather than picking one arbitrarily (mirrors
+    `emergency_unlock_provider.py`'s own established discipline for
+    a structurally different reason).
+  - `UNPARSEABLE_STATUS` — the real `status` field's value didn't
+    match any of the three confirmed enum members. This project has
+    directly confirmed the field's *type* (`str`) from a real
+    response, but never directly confirmed every real *value* always
+    matches the documented enum — an unexpected value is an honest
+    parse failure, never guessed at or coerced to a default.
+
+## What is NOT implemented
+
+- **CHASTER-01B Increment 4** — a conversation-engine context
+  provider reading `chaster_provider_observations`. Deliberately,
+  explicitly deferred: wiring live/persisted Chaster data into
+  `assemble_context()`'s prompt pipeline is its own decision, gated
+  separately from the rest of CHASTER-01B, per this project's own
+  review turn on the subject.
 - Any change to `lock_state`'s user-reported model or `task_runtime`'s
-  eligibility logic — both completely untouched.
-- `chaster disconnect` / `chaster status` commands.
-- Real Chaster account identity resolution (see `callback_service.py`
-  above).
-- Background/scheduled token refresh (a refresh is only ever attempted
-  transparently at the moment a token is actually needed — no
-  scheduler exists anywhere in this project).
+  eligibility logic — both completely untouched, confirmed by direct
+  inspection every time CHASTER-01B work has touched anything nearby.
+- `chaster disconnect` / `chaster status` commands (no Discord-facing
+  command reads a provider observation yet — that would be part of
+  or downstream of Increment 4).
 - Key rotation tooling (`encryption_key_version` is reserved,
   unused, always `NULL`).
-- **`LockForWearer`'s exact field-level JSON schema** — the real
-  Chaster unlock operation IS implemented (`POST
-  /locks/{lockId}/emergency-unlock`, Option A active-lock discovery
-  via `GET /locks?status=active` — both confirmed, both real, both
-  tested), but this project has never confirmed the exact JSON field
-  names of a returned lock object from any authoritative first-party
-  source. `emergency_unlock_provider.py::unconfirmed_lock_field_extractor`
-  isolates this one remaining gap — a real request today discovers
-  the active lock for real, enforces "exactly one" for real, and
-  then fails safely at the eligibility-check step.
+- **`LockForWearer`'s exact field-level JSON schema is now
+  confirmed** for a real account's real active locks (43 top-level
+  keys, including `_id`, `status`, `lockType`, `extensions` — see the
+  design doc's own diagnostic history) — but
+  `emergency_unlock_provider.py::unconfirmed_lock_field_extractor`,
+  the function the **emergency-unlock path specifically** relies on,
+  has **not** been updated to use this now-confirmed schema and still
+  always raises. The confirmed schema is what
+  `provider_observation_service.py` (above) is built against;
+  emergency-unlock's own eligibility-check step remains a distinct,
+  still-open piece of work.
+- Real Chaster account identity resolution — **now resolved**, see
+  `callback_service.py` above (kept here as a crossed-out item for
+  changelog continuity — no longer a real gap).
 
 ## PC-local emergency-unlock safety plane
 
@@ -102,7 +178,8 @@ itself is hung, crashed, or otherwise malfunctioning.
 
 - **`lock_client.py`** — `ChasterLockClient`: the two confirmed
   Chaster endpoints this safety plane needs (`GET /locks`,
-  `POST /locks/{lockId}/emergency-unlock`). Returns each lock as a
+  `POST /locks/{lockId}/emergency-unlock`), both now routed through
+  `_http.py::send_with_ordered_headers()`. Returns each lock as a
   raw, unparsed `dict` — deliberately does not guess field names.
 - **`emergency_unlock_provider.py`** — `RealChasterEmergencyUnlockProvider`:
   the real, tested Option A control flow (discover → enforce
@@ -110,7 +187,9 @@ itself is hung, crashed, or otherwise malfunctioning.
   that one lock only). `EmergencyUnlockProvider.attempt_unlock(access_token)`'s
   signature is unchanged — no caller can ever supply a lock ID.
   `UnwiredEmergencyUnlockProvider` remains as a test-only,
-  network-inert fixture.
+  network-inert fixture. The eligibility-check step still calls
+  `unconfirmed_lock_field_extractor` (see above) and so still fails
+  safely rather than guessing.
 - **`emergency_unlock.py`** — `EmergencyUnlockService`: authenticates
   against a dedicated secret (`CHASTER_EMERGENCY_UNLOCK_SECRET`,
   never reused from any other Chaster secret), writes an audit event
@@ -146,15 +225,21 @@ piece is missing:
 
 - **Milestone A** (pure local, mocked Chaster HTTP): `tests/chaster/`
   — fully exercised, no domain/Cloudflare/real Chaster application
-  needed.
+  needed. 349 tests across this package alone as of CHASTER-01B
+  Increment 3.
 - **Milestone B** (real local listener, no Cloudflare):
   `tests/chaster/test_callback_listener.py`,
   `tests/bot/test_chaster_listener_lifecycle.py` — a real `aiohttp`
   server, real HTTP requests, still entirely local.
 - **Milestone C** (real OAuth through a real tunnel + a real,
-  approved Chaster application): **not achievable yet** — blocked on
-  the identity-resolution gap above, independent of any
-  domain/Cloudflare/approval status.
+  approved Chaster application): **still not achievable** — no
+  longer blocked on identity resolution (now implemented), but
+  Cloudflare Tunnel has never been set up, and `chaster_connections`
+  has never been populated by a real, completed `chaster connect`
+  flow. Every real request made against the live Chaster API so far
+  (transport diagnostics, schema confirmation, this service's own
+  manual smoke tests) has used a developer token entered by hand,
+  never the production OAuth path.
 
 ## Current real-provider readiness (checkpoint status)
 
@@ -171,25 +256,29 @@ piece is missing:
   inside `RealChasterEmergencyUnlockProvider`.
 - **The confirmed `POST /locks/{lockId}/emergency-unlock` endpoint is
   used**, with the documented bondage-lock + enabled-safety-feature
-  eligibility requirement enforced before any unlock is attempted.
-- **`LockForWearer`'s exact field schema was NOT authoritatively
-  confirmed** from any first-party Chaster source, despite a genuine,
-  dedicated attempt. The implementation does not pretend otherwise:
-  `unconfirmed_lock_field_extractor` isolates this exact gap and
-  always raises, so a real request today fails safely at the
-  eligibility-check step rather than guessing field names.
-- **`CurrentUser`'s exact field schema also remains unresolved**
-  (`callback_service.py`'s own identity-resolution gap, above) —
-  unrelated to but structurally identical to the lock-schema gap.
-- **The real provider has not been proven against a real Chaster
-  account.** All 67 of this slice's own tests mock every Chaster HTTP
-  call — they prove this project's own control flow (discovery,
-  exactly-one enforcement, eligibility gating, status-code mapping)
-  behaves correctly; **they do not, and cannot, constitute proof that
-  Chaster's real API behaves as documented or that a real unlock
-  would succeed.**
+  eligibility requirement enforced before any unlock is attempted —
+  though note the real, confirmed account used throughout this
+  project's own diagnostics has `lockType: "chastity"`, not
+  `"bondage"`, so this endpoint's documented prerequisite may not
+  apply to that lock at all; this has not been reconciled.
+- **`LockForWearer`'s top-level field schema is now confirmed** (see
+  "What is NOT implemented" above) for real active locks on one real
+  account — but the emergency-unlock eligibility-check step itself
+  has not yet been updated to use it; `unconfirmed_lock_field_extractor`
+  still always raises there.
+- **`CurrentUser`'s exact field schema is now confirmed** — a real,
+  complete, verbatim `GET /auth/profile` response was captured and
+  used to build `callback_service.py::build_real_identity_resolver()`
+  (above).
+- **The real provider transport has been proven against a real
+  Chaster account** — real `GET /locks?status=active` and real `GET
+  /auth/profile` calls, through the actual production
+  `ChasterLockClient`/`ChasterOAuthClient` (including the header-
+  ordering fix), have both returned real HTTP 200 responses with
+  real data, confirmed via a dev-only production-client smoke test.
+  The real emergency-unlock POST itself has still never been
+  exercised against a real account.
 - **Cloudflare Tunnel is still not implemented** — Milestone C
-  (real OAuth end-to-end) remains unreachable for that reason alone,
-  separate from the schema gaps above.
+  (real OAuth end-to-end) remains unreachable for that reason alone.
 - **The local emergency safety-plane deployment gate remains open.**
   No real personal Chaster deployment should occur yet.
